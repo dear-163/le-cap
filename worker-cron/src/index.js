@@ -19,11 +19,6 @@ function daysAgoAd(days) {
   const y = d.getUTCFullYear(), m = String(d.getUTCMonth() + 1).padStart(2, '0'), day = String(d.getUTCDate()).padStart(2, '0');
   return `${y}${m}${day}`;
 }
-function rocToAd(rocDate) {
-  const s = String(rocDate).trim();
-  if (s.length !== 7) return s;
-  return `${parseInt(s.slice(0, 3), 10) + 1911}${s.slice(3)}`;
-}
 function parseNum(v) {
   const n = parseFloat(String(v ?? '').replace(/,/g, ''));
   return isFinite(n) ? n : null;
