@@ -16,7 +16,7 @@ wrangler.toml      Cloudflare Pages 專案設定 + KV binding
 
 ```bash
 npm install -g wrangler   # 若尚未安裝
-cp .dev.vars.example .dev.vars   # 填入你自己的 GEMINI_KEY（必填）與 FMP_KEY（選填）
+cp .dev.vars.example .dev.vars   # 填入你自己的 GEMINI_API_KEY（必填）與 FMP_KEY（選填）
 wrangler pages dev public
 ```
 
@@ -30,7 +30,7 @@ wrangler pages dev public
    - Build output directory：`public`
 3. 建立 KV namespace：`wrangler kv namespace create RATE_LIMIT_KV`，把回傳的 id 貼進 `wrangler.toml`，或直接在 Pages 專案的 Settings → Functions → KV namespace bindings 手動綁定 `RATE_LIMIT_KV`。
 4. 在 Pages 專案 Settings → Environment variables 新增加密的 Secret：
-   - `GEMINI_KEY`（必填，https://aistudio.google.com/app/apikey 免費申請）
+   - `GEMINI_API_KEY`（必填，https://aistudio.google.com/app/apikey 免費申請）
    - `FMP_KEY`（選填，補充美股財報數據，https://financialmodelingprep.com）
 5. 觸發部署（push 到 main 分支即會自動 build & 部署）。
 

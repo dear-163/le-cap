@@ -1,2 +1,2 @@
-GEMINI_KEY=your-gemini-api-key-here
+GEMINI_API_KEY=your-gemini-api-key-here
 FMP_KEY=your-fmp-api-key-here-optional

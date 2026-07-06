@@ -167,7 +167,7 @@ export async function onRequestPost(context) {
   if (!symbol || !techSummary || !SECTIONS[section]) {
     return jsonError('請求缺少必要欄位', 400);
   }
-  if (!env.GEMINI_KEY) {
+  if (!env.GEMINI_API_KEY) {
     return jsonError('伺服器尚未設定 AI 服務金鑰', 500);
   }
 
@@ -180,7 +180,7 @@ export async function onRequestPost(context) {
   const prompt = buildPrompt(symbol, companyName || symbol, techSummary, section) + groundingText;
 
   const upstream = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${env.GEMINI_KEY}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${env.GEMINI_API_KEY}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
