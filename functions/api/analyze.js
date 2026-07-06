@@ -186,7 +186,10 @@ export async function onRequestPost(context) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.7, maxOutputTokens: 1500 },
+        // Gemini 3.x models spend part of maxOutputTokens on hidden "thinking" tokens before
+        // the visible answer — 1500 was tuned for older non-thinking models and got the whole
+        // budget eaten by thoughtsTokenCount, truncating every response (finishReason MAX_TOKENS).
+        generationConfig: { temperature: 0.7, maxOutputTokens: 4096, thinkingConfig: { thinkingLevel: 'low' } },
         safetySettings: [
           { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
           { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },

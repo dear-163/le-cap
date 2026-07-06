@@ -501,7 +501,7 @@ async function streamGemini(payload,targetId,cardTitle,append,retryCount=0){
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({
           contents:[{role:'user',parts:[{text:buildPromptClientSide(payload.symbol,payload.companyName,payload.techSummary,payload.section)}]}],
-          generationConfig:{temperature:0.7,maxOutputTokens:1500},
+          generationConfig:{temperature:0.7,maxOutputTokens:4096,thinkingConfig:{thinkingLevel:'low'}},
           safetySettings:[
             {category:'HARM_CATEGORY_HARASSMENT',threshold:'BLOCK_NONE'},
             {category:'HARM_CATEGORY_HATE_SPEECH',threshold:'BLOCK_NONE'},
