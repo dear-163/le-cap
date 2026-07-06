@@ -1,0 +1,15 @@
+name = "elan-quant-cron"
+main = "src/index.js"
+compatibility_date = "2026-07-01"
+
+# Create with: wrangler d1 create elan-quant-db (or share the same D1 the Pages project uses)
+# then paste the returned database_id below. This binding name (ELAN_QUANT_DB) must match
+# the one bound on the Pages project (functions/api/sentiment.js and chip.js read the same DB).
+[[d1_databases]]
+binding = "ELAN_QUANT_DB"
+database_name = "elan-quant-db"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+
+# Weekdays only, 11:00 UTC = 19:00 Taipei — after TWSE's daily reports (MI_MARGN/T86/STOCK_DAY_ALL) settle.
+[triggers]
+crons = ["0 11 * * 1-5"]

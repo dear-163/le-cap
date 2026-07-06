@@ -57,8 +57,11 @@
 <div id="tabBar" class="tabs hidden">
   <div class="tab active" onclick="switchTab('tech',this)">📈 技術分析</div>
   <div class="tab" onclick="switchTab('fund',this)">🏢 基本面分析</div>
+  <div class="tab" onclick="switchTab('chip',this)">💰 籌碼面</div>
+  <div class="tab" onclick="switchTab('sentiment',this)">📊 市場情緒</div>
   <div class="tab" onclick="switchTab('risk',this)">⚠️ 風險評估</div>
   <div class="tab" onclick="switchTab('conclusion',this)">📋 投資結論</div>
+  <div class="tab" onclick="switchTab('summary',this)">🧭 綜合摘要</div>
 </div>
 
 <div class="main" id="mainReport">
@@ -124,6 +127,24 @@
   <div id="pane-conclusion" class="tab-pane hidden">
     <div class="fund-section" id="conclusionContent">
       <div class="info-box">請輸入股票代號並點擊「開始分析」，即可在此查看 AI 投資結論。</div>
+    </div>
+  </div>
+
+  <div id="pane-chip" class="tab-pane hidden">
+    <div id="chipContent">
+      <div class="info-box">請輸入股票代號並點擊「開始分析」，即可在此查看籌碼面資料（融資融券、大戶持股、三大法人買賣超）。</div>
+    </div>
+  </div>
+
+  <div id="pane-sentiment" class="tab-pane hidden">
+    <div id="sentimentContent">
+      <div class="info-box">市場情緒指數為全市場資料（與搜尋的個股無關），點擊「開始分析」任一股票即可載入。</div>
+    </div>
+  </div>
+
+  <div id="pane-summary" class="tab-pane hidden">
+    <div id="summaryContent">
+      <div class="info-box">請先設定 Gemini API Key，並點擊「開始分析」，即可在此查看技術面/基本面/籌碼面/市場情緒四面向的 AI 綜合摘要。</div>
     </div>
   </div>
 </div>

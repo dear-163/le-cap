@@ -98,6 +98,7 @@ input[type="password"]::placeholder{color:var(--text3);}
 .badge-green{background:var(--green-dim);color:var(--green);}
 .badge-red{background:var(--red-dim);color:var(--red);}
 .badge-amber{background:var(--amber-dim);color:var(--amber);}
+.src-note{font-size:10px;color:var(--text3);margin-top:2px;line-height:1.5;}
 
 .conclusion-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:20px 24px;}
 .conclusion-title{font-size:15px;font-weight:700;margin-bottom:16px;}

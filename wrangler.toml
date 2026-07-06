@@ -2,8 +2,10 @@ name = "elan-quant"
 compatibility_date = "2026-07-01"
 pages_build_output_dir = "public"
 
-# KV namespace binding (RATE_LIMIT_KV) is intentionally NOT declared here.
-# For a Git-connected Cloudflare Pages project, bind it from the dashboard instead:
-# Settings -> Functions -> KV namespace bindings -> Add binding (name: RATE_LIMIT_KV).
+# KV namespace binding (RATE_LIMIT_KV) and the D1 binding (ELAN_QUANT_DB, used by
+# functions/api/chip.js and functions/api/sentiment.js) are intentionally NOT declared here.
+# For a Git-connected Cloudflare Pages project, bind them from the dashboard instead:
+# Settings -> Functions -> KV namespace bindings / D1 database bindings -> Add binding.
 # A placeholder/invalid id here would make Cloudflare fail to resolve the binding at
-# build time, which is what caused the deployment to come up as 522 before this fix.
+# build time, which is what caused the deployment to come up as 522 before (see README).
+# ELAN_QUANT_DB must point at the SAME D1 database that worker-cron/wrangler.toml writes to.

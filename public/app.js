@@ -53,6 +53,10 @@ async function analyze(){
   ['fundContent','riskContent','conclusionContent'].forEach(id=>{
     document.getElementById(id).innerHTML=apiKey?waiting:needsKey;
   });
+  document.getElementById('summaryContent').innerHTML=apiKey?waiting:needsKey;
+  const chipWaiting='<div class="fund-loading"><div class="spinner"></div><span>正在抓取籌碼面資料⋯</span></div>';
+  document.getElementById('chipContent').innerHTML=chipWaiting;
+  document.getElementById('sentimentContent').innerHTML=chipWaiting;
 
   try{
     document.getElementById('loadingText').textContent='正在抓取股價數據⋯';
@@ -64,17 +68,33 @@ async function analyze(){
 
     document.getElementById('loadingBox').classList.add('hidden');
     document.getElementById('tabBar').classList.remove('hidden');
-    ['tech','fund','risk','conclusion'].forEach(id=>{
+    ['tech','fund','chip','sentiment','risk','conclusion','summary'].forEach(id=>{
       const el=document.getElementById('pane-'+id);
       el.classList.remove('hidden');
       if(id==='tech') el.classList.add('active');
     });
     document.querySelectorAll('.tab').forEach((t,i)=>i===0?t.classList.add('active'):t.classList.remove('active'));
 
+    const techSummary=buildTechSummary(sym,data,info);
+    const companyName=info.longName||info.shortName||sym;
+    if(apiKey) runGeminiAnalysis(sym,companyName,techSummary);
+
+    let chipData=null,sentimentData=null;
+    try{
+      chipData=await fetchChip(sym);
+      renderChip(chipData);
+    }catch(e){
+      document.getElementById('chipContent').innerHTML=`<div class="error-box">⚠ 籌碼面資料取得失敗：${e.message}</div>`;
+    }
+    try{
+      sentimentData=await fetchSentiment();
+      renderSentiment(sentimentData);
+    }catch(e){
+      document.getElementById('sentimentContent').innerHTML=`<div class="error-box">⚠ 市場情緒指數取得失敗：${e.message}</div>`;
+    }
+
     if(apiKey){
-      const techSummary=buildTechSummary(sym,data,info);
-      const companyName=info.longName||info.shortName||sym;
-      runGeminiAnalysis(sym,companyName,techSummary);
+      runSummaryAnalysis(sym,companyName,techSummary,chipData,sentimentData,info);
     }
   }catch(e){
     document.getElementById('errorBox').innerHTML='⚠ <strong>'+e.message.replace(/\n/g,'<br>')+'</strong>';
@@ -443,13 +463,13 @@ async function fetchGroundingText(symbol,section){
 }
 
 async function runGeminiAnalysis(symbol,companyName,techSummary){
-  const base={symbol,companyName,techSummary,model:selectedModel};
+  const model=selectedModel;
   const fundGrounding=await fetchGroundingText(symbol,'fundamentals');
-  await streamGemini({...base,section:'fundamentals',groundingText:fundGrounding},'fundContent','🏢 公司基本面 + 財務健康（重點一、二）',false);
+  await streamGemini({prompt:buildPromptClientSide(symbol,companyName,techSummary,'fundamentals',fundGrounding),model},'fundContent','🏢 公司基本面 + 財務健康（重點一、二）',false);
   const valGrounding=await fetchGroundingText(symbol,'valuation');
-  await streamGemini({...base,section:'valuation',groundingText:valGrounding},'fundContent','💰 估值合理性分析（重點三）',true);
-  await streamGemini({...base,section:'risk'},'riskContent','⚠️ 風險因素評估（重點四）',false);
-  await streamGemini({...base,section:'conclusion'},'conclusionContent','📋 投資結論整理（重點五）',false);
+  await streamGemini({prompt:buildPromptClientSide(symbol,companyName,techSummary,'valuation',valGrounding),model},'fundContent','💰 估值合理性分析（重點三）',true);
+  await streamGemini({prompt:buildPromptClientSide(symbol,companyName,techSummary,'risk'),model},'riskContent','⚠️ 風險因素評估（重點四）',false);
+  await streamGemini({prompt:buildPromptClientSide(symbol,companyName,techSummary,'conclusion'),model},'conclusionContent','📋 投資結論整理（重點五）',false);
 }
 
 async function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
@@ -486,7 +506,7 @@ const PROMPT_SECTIONS={
 2. 主要風險（3項，每項一句）
 3. 需要進一步查證的資料（2-4項）
 4. 適合哪類投資者（成長型/價值型/收息型/不建議散戶，說明理由）
-5. 綜合評級（從四選一並說明）：強烈關注 / 值得追蹤 / 中性觀望 / 暫時迴避
+只整理以上現況重點，不要給「強烈關注/值得追蹤/中性觀望/暫時迴避」這類分類評級，也不要給任何買進/賣出/加碼/減碼的操作建議。
 最後加免責聲明段落。`,
 };
 function buildPromptClientSide(symbol,companyName,techSummary,section,groundingText){
@@ -518,7 +538,7 @@ async function streamGemini(payload,targetId,cardTitle,append,retryCount=0){
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({
-          contents:[{role:'user',parts:[{text:buildPromptClientSide(payload.symbol,payload.companyName,payload.techSummary,payload.section,payload.groundingText)}]}],
+          contents:[{role:'user',parts:[{text:payload.prompt}]}],
           generationConfig:{temperature:0.7,maxOutputTokens:4096,thinkingConfig:{thinkingLevel:'low'}},
           safetySettings:[
             {category:'HARM_CATEGORY_HARASSMENT',threshold:'BLOCK_NONE'},
@@ -587,6 +607,183 @@ async function streamGemini(payload,targetId,cardTitle,append,retryCount=0){
     contentEl.classList.remove('streaming');
     contentEl.innerHTML=`<div class="error-box">⚠ AI 分析失敗：${e.message}</div>`;
   }
+}
+
+// ---- 籌碼面 ----
+function fmtField(field,formatter){
+  if(!field) return '<span style="color:var(--text3)">暫無資料</span>';
+  if(field.error) return `<span style="color:var(--text3)">暫無資料</span><div class="src-note">${field.error}</div>`;
+  if(field.value==null) return `<span style="color:var(--text3)">暫無資料</span>${field.note?`<div class="src-note">${field.note}</div>`:''}`;
+  const val=formatter?formatter(field.value):field.value;
+  const src=field.source?`${field.source}${field.date?'／'+field.date:''}`:'';
+  return `${val}${src?`<div class="src-note">來源：${src}</div>`:''}`;
+}
+
+async function fetchChip(symbol){
+  const res=await fetch(`/api/chip?symbol=${encodeURIComponent(symbol)}`);
+  const body=await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(body?.error||'籌碼面資料取得失敗');
+  return body;
+}
+
+function renderChip(data){
+  const el=document.getElementById('chipContent');
+  const m=data.margin||{},h=data.holders||{},inst=data.institutional||{};
+  const pct=v=>(v*100).toFixed(2)+'%';
+  const num=v=>Number(v).toLocaleString();
+  el.innerHTML=`
+  <div class="indicator-grid">
+    <div class="ind-card"><div class="ind-title">📑 融資融券</div>
+      ${m.error?`<div class="error-box">⚠ 暫無資料：${m.error}</div>`:`
+      <div class="ind-row"><span class="ind-name">融資今日餘額</span><span class="ind-val">${fmtField(m.marginBalance,num)}</span></div>
+      <div class="ind-row"><span class="ind-name">融資使用率</span><span class="ind-val">${fmtField(m.marginUsageRate,pct)}</span></div>
+      <div class="ind-row"><span class="ind-name">融券今日餘額</span><span class="ind-val">${fmtField(m.shortBalance,num)}</span></div>
+      <div class="ind-row"><span class="ind-name">券資比</span><span class="ind-val">${fmtField(m.shortToMarginRatio,pct)}</span></div>`}
+    </div>
+    <div class="ind-card"><div class="ind-title">👥 大戶持股結構</div>
+      ${h.error?`<div class="error-box">⚠ 暫無資料：${h.error}</div>`:`
+      <div class="ind-row"><span class="ind-name">千張大戶佔比</span><span class="ind-val">${fmtField(h.bigHolderPct,v=>v.toFixed(2)+'%')}</span></div>
+      <div class="ind-row"><span class="ind-name">中實戶佔比</span><span class="ind-val">${fmtField(h.midHolderPct,v=>v.toFixed(2)+'%')}</span></div>
+      <div class="ind-row"><span class="ind-name">週變化（千張大戶）</span><span class="ind-val">${fmtField(h.weeklyChange,v=>(v>=0?'+':'')+v.toFixed(2)+'%')}</span></div>
+      <div class="src-note" style="margin-top:6px">集保股權分散表每週五更新一次，其餘平日資料不變。</div>`}
+    </div>
+    <div class="ind-card"><div class="ind-title">🏦 三大法人買賣超（近5日）</div>
+      ${inst.error?`<div class="error-box">⚠ 暫無資料：${inst.error}</div>`:`
+      <div class="ind-row"><span class="ind-name">外資累計買賣超</span><span class="ind-val ${inst.foreignNet5d?.value>0?'up':inst.foreignNet5d?.value<0?'down':''}">${fmtField(inst.foreignNet5d,num)}</span></div>
+      <div class="ind-row"><span class="ind-name">投信累計買賣超</span><span class="ind-val ${inst.trustNet5d?.value>0?'up':inst.trustNet5d?.value<0?'down':''}">${fmtField(inst.trustNet5d,num)}</span></div>
+      <div class="ind-row"><span class="ind-name">自營商累計買賣超</span><span class="ind-val">${fmtField(inst.dealerNet5d,num)}</span></div>
+      <div class="ind-row"><span class="ind-name">外資連續買/賣超天數</span><span class="ind-val">${fmtField(inst.foreignConsecutiveDays,v=>Math.abs(v)+'天'+(v>0?'買超':v<0?'賣超':''))}</span></div>`}
+    </div>
+  </div>
+  <div class="disclaimer">⚠ 籌碼面資料僅供參考，不構成投資建議。資料來源：TWSE 台灣證券交易所、TDCC 台灣集中保管結算所。</div>`;
+}
+
+// ---- 市場情緒（貪婪指數）----
+function sentimentGaugeSVG(score,level){
+  const clamped=Math.max(0,Math.min(100,score));
+  const angle=Math.PI*(clamped/100);
+  const cx=150,cy=140,r=110;
+  const needleAngle=Math.PI-angle;
+  const nx=(cx+r*0.85*Math.cos(needleAngle)).toFixed(1);
+  const ny=(cy-r*0.85*Math.sin(needleAngle)).toFixed(1);
+  return `<svg viewBox="0 0 300 170" width="100%" style="max-width:320px;display:block;margin:0 auto">
+    <defs><linearGradient id="gaugeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ff5252"/><stop offset="25%" stop-color="#ffab00"/>
+      <stop offset="50%" stop-color="#9090a8"/><stop offset="75%" stop-color="#8bc34a"/>
+      <stop offset="100%" stop-color="#00e676"/>
+    </linearGradient></defs>
+    <path d="M ${cx-r} ${cy} A ${r} ${r} 0 0 1 ${cx+r} ${cy}" stroke="url(#gaugeGrad)" stroke-width="18" fill="none" stroke-linecap="round"/>
+    <line x1="${cx}" y1="${cy}" x2="${nx}" y2="${ny}" stroke="var(--text)" stroke-width="3"/>
+    <circle cx="${cx}" cy="${cy}" r="6" fill="var(--text)"/>
+    <text x="${cx}" y="${cy+34}" text-anchor="middle" font-size="30" font-weight="700" fill="var(--text)">${score.toFixed(0)}</text>
+    <text x="${cx}" y="${cy+54}" text-anchor="middle" font-size="13" fill="var(--text2)">${level||''}</text>
+  </svg>`;
+}
+
+async function fetchSentiment(){
+  const res=await fetch('/api/sentiment');
+  const body=await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(body?.error||'市場情緒指數取得失敗');
+  return body;
+}
+
+function renderSentiment(data){
+  const el=document.getElementById('sentimentContent');
+  const gaugeHtml=data.greedIndex!=null
+    ?sentimentGaugeSVG(data.greedIndex,data.level)
+    :`<div class="info-box">${data.maturityMessage||'資料累積中'}</div>`;
+  const statusNote=s=>s==='accumulating'?'（資料累積中）':s==='no_data'?'（暫無資料）':'';
+  const rows=(data.indicators||[]).map(ind=>{
+    const scoreText=ind.status==='ready'?ind.percentileScore.toFixed(1):'--';
+    const rawText=ind.rawValue!=null?(ind.rawValue*100).toFixed(2)+'%':'N/A';
+    return `<div class="ind-card">
+      <div class="ind-title">${ind.label}${statusNote(ind.status)}</div>
+      <div class="ind-row"><span class="ind-name">百分位分數</span><span class="ind-val">${scoreText}</span></div>
+      <div class="ind-row"><span class="ind-name">原始值</span><span class="ind-val">${rawText}</span></div>
+      <div class="ind-row"><span class="ind-name">資料成熟度</span><span class="ind-val">${ind.maturity}</span></div>
+      <div class="src-note">來源：${ind.source}｜${ind.direction||''}${ind.date?'｜'+ind.date:''}</div>
+    </div>`;
+  }).join('');
+  el.innerHTML=`
+  <div class="chart-card" style="text-align:center">
+    <div class="chart-title-bar">台股情緒指數（0-100）</div>
+    ${gaugeHtml}
+    ${data.readyCount!=null?`<div style="font-size:12px;color:var(--text2);margin-top:8px">共 ${data.readyCount}/${data.totalIndicators} 項指標計入本次計算</div>`:''}
+  </div>
+  <div class="indicator-grid" style="margin-top:16px">${rows}</div>
+  <div class="disclaimer">⚠ 本指數為自製近似指標，方法論參考 CNN Fear & Greed Index，非官方標準，僅供參考。${data.methodology||''}</div>`;
+}
+
+// ---- AI 綜合摘要（技術面＋基本面＋籌碼面＋市場情緒）----
+function buildSummaryData(info,techSummary,chipData,sentimentData){
+  const fundamental={
+    本益比:info.trailingPE??null, 預估本益比:info.forwardPE??null, 股價淨值比:info.priceToBook??null,
+    殖利率:info.dividendYield!=null?(info.dividendYield*100).toFixed(2)+'%':null,
+    毛利率:info.grossMargins!=null?(info.grossMargins*100).toFixed(1)+'%':null,
+    營業利益率:info.operatingMargins!=null?(info.operatingMargins*100).toFixed(1)+'%':null,
+    產業:info.sector||null,
+  };
+  const fundamentalInsufficient=Object.values(fundamental).every(v=>v==null);
+
+  let chip=null,chipInsufficient=true;
+  if(chipData){
+    const m=chipData.margin||{},h=chipData.holders||{},inst=chipData.institutional||{};
+    chip={
+      融資使用率:!m.error&&m.marginUsageRate?.value!=null?(m.marginUsageRate.value*100).toFixed(2)+'%':null,
+      券資比:!m.error&&m.shortToMarginRatio?.value!=null?(m.shortToMarginRatio.value*100).toFixed(2)+'%':null,
+      千張大戶佔比:!h.error&&h.bigHolderPct?.value!=null?h.bigHolderPct.value.toFixed(2)+'%':null,
+      大戶持股週變化:!h.error&&h.weeklyChange?.value!=null?h.weeklyChange.value.toFixed(2)+'%':null,
+      外資近5日買賣超:!inst.error&&inst.foreignNet5d?.value!=null?inst.foreignNet5d.value.toLocaleString():null,
+      投信近5日買賣超:!inst.error&&inst.trustNet5d?.value!=null?inst.trustNet5d.value.toLocaleString():null,
+    };
+    chipInsufficient=Object.values(chip).every(v=>v==null);
+  }
+
+  let sentiment=null,sentimentInsufficient=true;
+  if(sentimentData){
+    sentiment={
+      貪婪指數:sentimentData.greedIndex!=null?sentimentData.greedIndex.toFixed(1):null,
+      分級:sentimentData.level||null,
+      資料成熟度:sentimentData.readyCount!=null?`${sentimentData.readyCount}/${sentimentData.totalIndicators} 項指標可用`:null,
+    };
+    sentimentInsufficient=sentimentData.greedIndex==null;
+  }
+
+  return{
+    technical: techSummary?{原始技術面摘要:techSummary}:{insufficient:true},
+    fundamental: fundamentalInsufficient?{insufficient:true}:fundamental,
+    chip: chipInsufficient?{insufficient:true}:chip,
+    sentiment: sentimentInsufficient?{insufficient:true,說明:sentimentData?.maturityMessage||null}:sentiment,
+  };
+}
+
+function buildSummaryPrompt(symbol,companyName,summaryData){
+  return`你是一位協助整理股票多面向數據的助手。根據以下技術面、基本面、籌碼面、市場情緒面的數據，
+用繁體中文寫一份 4 段的摘要，每段對應一個面向，只描述「數據呈現什麼現況」，例如：
+「技術面：RSI 為 72，處於超買區間；MACD 呈現黃金交叉，短期動能偏強」
+
+分析對象：${companyName}（${symbol}）
+
+資料（JSON，"insufficient": true 代表該面向資料不足）：
+${JSON.stringify(summaryData,null,2)}
+
+嚴格規則：
+1. 絕對不要說「建議買進」「建議賣出」「現在是好的進場點」這類操作建議
+2. 絕對不要給目標價、停損價等具體交易指令
+3. 如果任一面向的物件包含 "insufficient": true，直接說明「此面向資料不足，暫無法判讀」，不要用其他面向的資料去補推測
+4. 最後加一段：「以上僅為數據現況整理，不構成投資建議，請自行判斷或諮詢專業意見」
+5. 四個面向之間如果出現矛盾訊號（例如技術面偏多但籌碼面顯示融資異常增加），要明確點出這個矛盾，不要為了寫出「一致的結論」而選擇性忽略某一面向的數據
+6. 請用繁體中文回答，格式使用 HTML（<h3><ul><li><p><strong>標籤），不要包含任何 markdown 或程式碼區塊標記`;
+}
+
+async function runSummaryAnalysis(symbol,companyName,techSummary,chipData,sentimentData,info){
+  const summaryData=buildSummaryData(info,techSummary,chipData,sentimentData);
+  const prompt=buildSummaryPrompt(symbol,companyName,summaryData);
+  await streamGemini({prompt,model:selectedModel},'summaryContent','🧭 四面向綜合摘要',false);
+  const rawEl=document.createElement('div');
+  rawEl.className='fund-card';
+  rawEl.innerHTML=`<div class="fund-card-title">📎 原始數據（供核對 AI 摘要是否正確）</div><div class="fund-content" style="font-family:monospace;font-size:12px;white-space:pre-wrap">${JSON.stringify(summaryData,null,2).replace(/</g,'&lt;')}</div>`;
+  document.getElementById('summaryContent').appendChild(rawEl);
 }
 
 function persistSet(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch{} }
