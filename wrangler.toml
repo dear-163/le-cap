@@ -2,10 +2,13 @@ name = "elan-quant"
 compatibility_date = "2026-07-01"
 pages_build_output_dir = "public"
 
-# KV namespace binding (RATE_LIMIT_KV) and the D1 binding (ELAN_QUANT_DB, used by
-# functions/api/chip.js and functions/api/sentiment.js) are intentionally NOT declared here.
-# For a Git-connected Cloudflare Pages project, bind them from the dashboard instead:
-# Settings -> Functions -> KV namespace bindings / D1 database bindings -> Add binding.
-# A placeholder/invalid id here would make Cloudflare fail to resolve the binding at
-# build time, which is what caused the deployment to come up as 522 before (see README).
+# This Pages project reads bindings from this file (not the dashboard) once wrangler.toml
+# is present — the Dashboard's "Variables and Secrets" page only manages Secrets in that mode.
 # ELAN_QUANT_DB must point at the SAME D1 database that worker-cron/wrangler.toml writes to.
+[[d1_databases]]
+binding = "ELAN_QUANT_DB"
+database_name = "elan-quant-db"
+database_id = "dd4ed81c-fb85-43fd-b4ba-4485857fa6fe"
+
+# KV namespace binding (RATE_LIMIT_KV) is optional (Yahoo cookie/crumb caching only) and not
+# yet created — add a [[kv_namespaces]] block here the same way if/when you set one up.
