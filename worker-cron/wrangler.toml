@@ -1,14 +1,14 @@
-name = "elan-quant-cron"
+# Must match the Worker's actual name in the Cloudflare dashboard (it was auto-named "elan-quant"
+# from the repo name when created via "Ship something new" -> connect to Git, not "elan-quant-cron").
+name = "elan-quant"
 main = "src/index.js"
 compatibility_date = "2026-07-01"
 
-# Create with: wrangler d1 create elan-quant-db (or share the same D1 the Pages project uses)
-# then paste the returned database_id below. This binding name (ELAN_QUANT_DB) must match
-# the one bound on the Pages project (functions/api/sentiment.js and chip.js read the same DB).
+# Same D1 database the Pages project (../wrangler.toml) binds as ELAN_QUANT_DB.
 [[d1_databases]]
 binding = "ELAN_QUANT_DB"
 database_name = "elan-quant-db"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "dd4ed81c-fb85-43fd-b4ba-4485857fa6fe"
 
 # Weekdays only, 11:00 UTC = 19:00 Taipei — after TWSE's daily reports (MI_MARGN/T86/STOCK_DAY_ALL) settle.
 [triggers]
