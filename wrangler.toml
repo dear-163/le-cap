@@ -2,8 +2,8 @@ name = "elan-quant"
 compatibility_date = "2026-07-01"
 pages_build_output_dir = "public"
 
-# Create with: wrangler kv namespace create RATE_LIMIT_KV
-# then paste the returned id below (or bind it from the Cloudflare Pages dashboard instead).
-[[kv_namespaces]]
-binding = "RATE_LIMIT_KV"
-id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+# KV namespace binding (RATE_LIMIT_KV) is intentionally NOT declared here.
+# For a Git-connected Cloudflare Pages project, bind it from the dashboard instead:
+# Settings -> Functions -> KV namespace bindings -> Add binding (name: RATE_LIMIT_KV).
+# A placeholder/invalid id here would make Cloudflare fail to resolve the binding at
+# build time, which is what caused the deployment to come up as 522 before this fix.
