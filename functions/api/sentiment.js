@@ -123,9 +123,11 @@ export async function onRequestGet(context) {
   }
 
   const indicators = INDICATORS.map(ind => {
-    const series = ind.seriesFn(rows);
+    // Cap to the most recent MATURE_HISTORY days — a rolling window, not all-time-since-launch —
+    // so scores stay relative to roughly "the past year" instead of drifting as more history piles up.
+    const series = ind.seriesFn(rows).slice(-MATURE_HISTORY);
     const historyLength = series.length;
-    const base = { key: ind.key, label: ind.label, source: ind.source, direction: ind.direction, maturity: `${Math.min(historyLength, MATURE_HISTORY)}/${MATURE_HISTORY}` };
+    const base = { key: ind.key, label: ind.label, source: ind.source, direction: ind.direction, maturity: `${historyLength}/${MATURE_HISTORY}` };
     if (historyLength === 0) {
       return { ...base, status: 'no_data' };
     }
