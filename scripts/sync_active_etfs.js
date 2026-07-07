@@ -6,31 +6,74 @@ const target = process.argv.includes('--remote') ? '--remote' : '--local';
 
 console.log(`Starting Active ETF holdings sync in ${target === '--remote' ? 'REMOTE' : 'LOCAL'} mode...`);
 
-// Define seed data reflecting daily snapshots
+// Expanded seed data reflecting daily snapshots (5 net buys, 5 net sells)
 const seedData = [
-  // 2026-07-03
-  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '2330', date: '2026-07-03', shares: 1000000, weight: 5.5 },
-  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '5347', date: '2026-07-03', shares: 800000, weight: 4.2 },
-  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '2454', date: '2026-07-03', shares: 300000, weight: 3.8 },
-  { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '2330', date: '2026-07-03', shares: 1200000, weight: 6.2 },
-  { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '5347', date: '2026-07-03', shares: 600000, weight: 3.1 },
-  { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '2454', date: '2026-07-03', shares: 350000, weight: 4.5 },
-
   // 2026-07-06 (Monday)
+  // Buys group (initial holdings)
   { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '2330', date: '2026-07-06', shares: 1050000, weight: 5.7 },
-  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '5347', date: '2026-07-06', shares: 780000, weight: 4.0 },
-  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '2454', date: '2026-07-06', shares: 290000, weight: 3.6 },
   { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '2330', date: '2026-07-06', shares: 1180000, weight: 6.0 },
-  { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '5347', date: '2026-07-06', shares: 650000, weight: 3.3 },
+
+  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '2454', date: '2026-07-06', shares: 290000, weight: 3.6 },
   { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '2454', date: '2026-07-06', shares: 360000, weight: 4.6 },
 
+  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '2317', date: '2026-07-06', shares: 2000000, weight: 4.5 },
+  { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '2317', date: '2026-07-06', shares: 1800000, weight: 4.0 },
+
+  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '2308', date: '2026-07-06', shares: 400000, weight: 2.8 },
+  { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '2308', date: '2026-07-06', shares: 350000, weight: 2.5 },
+
+  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '2382', date: '2026-07-06', shares: 900000, weight: 3.2 },
+  { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '2382', date: '2026-07-06', shares: 850000, weight: 3.0 },
+
+  // Sells group (initial holdings)
+  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '5347', date: '2026-07-06', shares: 800000, weight: 4.2 },
+  { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '5347', date: '2026-07-06', shares: 700000, weight: 3.6 },
+
+  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '2303', date: '2026-07-06', shares: 3000000, weight: 3.5 },
+  { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '2303', date: '2026-07-06', shares: 2500000, weight: 3.0 },
+
+  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '2603', date: '2026-07-06', shares: 600000, weight: 2.1 },
+  { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '2603', date: '2026-07-06', shares: 500000, weight: 1.8 },
+
+  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '3231', date: '2026-07-06', shares: 1500000, weight: 2.4 },
+  { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '3231', date: '2026-07-06', shares: 1200000, weight: 2.0 },
+
+  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '2376', date: '2026-07-06', shares: 500000, weight: 1.9 },
+  { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '2376', date: '2026-07-06', shares: 450000, weight: 1.7 },
+
+
   // 2026-07-07 (Tuesday, Today)
-  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '2330', date: '2026-07-07', shares: 1100000, weight: 6.0 },
-  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '5347', date: '2026-07-07', shares: 750000, weight: 3.8 },
-  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '2454', date: '2026-07-07', shares: 310000, weight: 3.9 },
-  { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '2330', date: '2026-07-07', shares: 1250000, weight: 6.5 },
-  { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '5347', date: '2026-07-07', shares: 700000, weight: 3.6 },
-  { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '2454', date: '2026-07-07', shares: 380000, weight: 4.8 }
+  // Buys group (increased holdings)
+  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '2330', date: '2026-07-07', shares: 1100000, weight: 6.0 }, // +50k
+  { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '2330', date: '2026-07-07', shares: 1250000, weight: 6.5 }, // +70k (Net +120k)
+
+  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '2454', date: '2026-07-07', shares: 310000, weight: 3.9 },  // +20k
+  { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '2454', date: '2026-07-07', shares: 380000, weight: 4.8 },  // +20k (Net +40k)
+
+  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '2317', date: '2026-07-07', shares: 2050000, weight: 4.7 }, // +50k
+  { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '2317', date: '2026-07-07', shares: 1840000, weight: 4.2 }, // +40k (Net +90k)
+
+  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '2308', date: '2026-07-07', shares: 420000, weight: 3.0 },  // +20k
+  { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '2308', date: '2026-07-07', shares: 360000, weight: 2.6 },  // +10k (Net +30k)
+
+  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '2382', date: '2026-07-07', shares: 930000, weight: 3.3 },  // +30k
+  { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '2382', date: '2026-07-07', shares: 870000, weight: 3.1 },  // +20k (Net +50k)
+
+  // Sells group (decreased holdings - Trimming/減碼)
+  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '5347', date: '2026-07-07', shares: 750000, weight: 3.8 },  // -50k
+  { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '5347', date: '2026-07-07', shares: 670000, weight: 3.4 },  // -30k (Net -80k)
+
+  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '2303', date: '2026-07-07', shares: 2920000, weight: 3.3 }, // -80k
+  { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '2303', date: '2026-07-07', shares: 2430000, weight: 2.9 }, // -70k (Net -150k)
+
+  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '2603', date: '2026-07-07', shares: 570000, weight: 2.0 },  // -30k
+  { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '2603', date: '2026-07-07', shares: 470000, weight: 1.7 },  // -30k (Net -60k)
+
+  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '3231', date: '2026-07-07', shares: 1440000, weight: 2.3 }, // -60k
+  { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '3231', date: '2026-07-07', shares: 1160000, weight: 1.9 }, // -40k (Net -100k)
+
+  { etf_code: '00980A', etf_name: '野村臺灣智慧優選主動式ETF', stock_code: '2376', date: '2026-07-07', shares: 480000, weight: 1.8 },  // -20k
+  { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '2376', date: '2026-07-07', shares: 430000, weight: 1.6 }   // -20k (Net -40k)
 ];
 
 const sqlStatements = seedData.map(d => {
