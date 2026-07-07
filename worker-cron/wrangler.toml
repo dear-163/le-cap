@@ -10,6 +10,11 @@ binding = "ELAN_QUANT_DB"
 database_name = "elan-quant-db"
 database_id = "dd4ed81c-fb85-43fd-b4ba-4485857fa6fe"
 
-# Weekdays only, 11:00 UTC = 19:00 Taipei — after TWSE's daily reports (MI_MARGN/T86/STOCK_DAY_ALL) settle.
+# Weekdays only, 10:00 UTC = 18:00 Taipei. Originally 19:00 (1hr later) as a conservative default —
+# TWSE officially publishes T86 (三大法人買賣超, the slowest of the 5 reports this cron reads) around
+# 17:00 Taipei, so 18:00 keeps a 1hr safety buffer instead of waiting 2 extra hours unnecessarily.
+# daily_market_data.updated_at records the actual wall-clock write time each day, so if 18:00 ever
+# proves too early (fields showing NULL because TWSE hadn't settled yet), that'll be directly visible
+# in the data rather than silently guessed at.
 [triggers]
-crons = ["0 11 * * 1-5"]
+crons = ["0 10 * * 1-5"]

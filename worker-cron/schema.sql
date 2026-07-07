@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS daily_market_data (
   new_lows INTEGER,                -- 今日創52週新低家數
   margin_balance_total REAL,       -- 全市場融資今日餘額加總，5日變化率在讀取時計算
   inst_net_buy_count INTEGER,      -- 三大法人合計淨買超家數
-  inst_net_sell_count INTEGER      -- 三大法人合計淨賣超家數
+  inst_net_sell_count INTEGER,     -- 三大法人合計淨賣超家數
+  updated_at TEXT                  -- 排程實際寫入這筆資料當下的台北時間（HH:MM），用來驗證/公開實際資料到位時間
 );
 
 -- 個股每日收盤/高/低。只保留近一年（由 worker 清理更舊的資料），

@@ -114,7 +114,7 @@ export async function onRequestGet(context) {
   let rows;
   try {
     const result = await env.ELAN_QUANT_DB
-      .prepare('SELECT date, taiex_close, advancers, decliners, new_highs, new_lows, margin_balance_total, inst_net_buy_count, inst_net_sell_count FROM daily_market_data ORDER BY date ASC')
+      .prepare('SELECT date, taiex_close, advancers, decliners, new_highs, new_lows, margin_balance_total, inst_net_buy_count, inst_net_sell_count, updated_at FROM daily_market_data ORDER BY date ASC')
       .all();
     rows = result.results || [];
   } catch (e) {
@@ -174,6 +174,7 @@ export async function onRequestGet(context) {
     maturityMessage,
     methodology: '等權重 + 歷史百分位標準化（近252個交易日），方法論參考 CNN Fear & Greed Index，非官方標準，僅供參考。',
     latestDate: rows[rows.length - 1].date,
+    latestUpdatedAt: rows[rows.length - 1].updated_at || null,
   }, 200, { 'Cache-Control': 'public, max-age=600' });
   context.waitUntil(cache.put(cacheKey, response.clone()));
   return response;

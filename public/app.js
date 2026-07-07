@@ -1007,11 +1007,13 @@ function renderSentiment(data){
       <div class="src-note">來源：${ind.source}｜${ind.direction||''}${ind.date?'｜'+ind.date:''}</div>
     </div>`;
   }).join('');
+  const updatedNote=data.latestDate?`資料日期：${data.latestDate}${data.latestUpdatedAt?`（台北時間 ${data.latestUpdatedAt} 更新）`:''}`:'';
   el.innerHTML=`
   <div class="chart-card" style="text-align:center">
     <div class="chart-title-bar">台股情緒指數（0-100）</div>
     ${gaugeHtml}
     ${data.readyCount!=null?`<div style="font-size:12px;color:var(--text2);margin-top:8px">共 ${data.readyCount}/${data.totalIndicators} 項指標計入本次計算</div>`:''}
+    ${updatedNote?`<div style="font-size:11px;color:var(--text3);margin-top:4px">${updatedNote}</div>`:''}
   </div>
   <div class="indicator-grid" style="margin-top:16px">${rows}</div>
   <div class="disclaimer">⚠ 本指數為自製近似指標，方法論參考 CNN Fear & Greed Index，非官方標準，僅供參考。${data.methodology||''}</div>`;
