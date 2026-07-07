@@ -98,8 +98,9 @@ async function analyze(){
     // Chip and sentiment are independent data sources — fetch them concurrently instead of
     // sequentially so the wait before rendering (and before the AI summary can start) is roughly
     // halved, especially since chip.js does non-trivial work server-side (TDCC CSV parse + T86 calls).
+    const isTW=isTaiwanSymbol(sym);
     await Promise.all([
-      fetchChip(sym).then(d=>{ if(myGen!==analyzeGeneration) return; chipData=d; renderChip(d); }).catch(e=>{
+      (isTW?fetchChip(sym):fetchChipUS(sym)).then(d=>{ if(myGen!==analyzeGeneration) return; chipData=d; (isTW?renderChip:renderChipUS)(d); }).catch(e=>{
         if(myGen!==analyzeGeneration) return;
         document.getElementById('chipContent').innerHTML=`<div class="error-box">⚠ 籌碼面資料取得失敗：${escapeHtml(e.message)}</div>`;
       }),
@@ -702,6 +703,45 @@ function renderChip(data){
   <div class="disclaimer">⚠ 籌碼面資料僅供參考，不構成投資建議。資料來源：TWSE 台灣證券交易所、TDCC 台灣集中保管結算所。</div>`;
 }
 
+// 台灣的融資融券／集保股權分散／三大法人是 TWSE/TDCC 特有的規範，美股沒有每日對應的東西——最接近的
+//官方揭露是 SEC 13F（機構持股，季報）與 Form 4（內部人買賣，近即時），兩者都透過 FMP 取得。
+const NON_TW_SUFFIX_RE=/\.(TW|TWO)$/i;
+function isTaiwanSymbol(symbol){ return NON_TW_SUFFIX_RE.test(symbol); }
+
+async function fetchChipUS(symbol){
+  let url=`/api/chip-us?symbol=${encodeURIComponent(symbol)}`;
+  if(fmpKey) url+=`&fmpKey=${encodeURIComponent(fmpKey)}`;
+  const res=await fetch(url);
+  const body=await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(body?.error||'籌碼面資料取得失敗');
+  return body;
+}
+
+function renderChipUS(data){
+  const el=document.getElementById('chipContent');
+  const inst=data.institutional||{},ins=data.insider||{};
+  const num=v=>Number(v).toLocaleString();
+  el.innerHTML=`
+  <div class="indicator-grid">
+    <div class="ind-card"><div class="ind-title">🏛️ 機構持股（SEC 13F）</div>
+      ${inst.error?`<div class="error-box">⚠ 暫無資料：${escapeHtml(inst.error)}</div>`:`
+      <div class="ind-row"><span class="ind-name">機構持股比例</span><span class="ind-val">${fmtField(inst.ownershipPercent,v=>v.toFixed(2)+'%')}</span></div>
+      <div class="ind-row"><span class="ind-name">持股機構數</span><span class="ind-val">${fmtField(inst.investorsHolding,num)}</span></div>
+      <div class="ind-row"><span class="ind-name">持股機構數變化</span><span class="ind-val ${inst.investorsHoldingChange?.value>0?'up':inst.investorsHoldingChange?.value<0?'down':''}">${fmtField(inst.investorsHoldingChange,v=>(v>=0?'+':'')+num(v))}</span></div>
+      <div class="ind-row"><span class="ind-name">機構總投資金額</span><span class="ind-val">${fmtField(inst.totalInvested,v=>'$'+num(v))}</span></div>
+      <div class="src-note" style="margin-top:6px">SEC 規定管理逾1億美元的機構每季申報一次（13F），非每日資料。</div>`}
+    </div>
+    <div class="ind-card"><div class="ind-title">👤 內部人買賣（SEC Form 4）</div>
+      ${ins.error?`<div class="error-box">⚠ 暫無資料：${escapeHtml(ins.error)}</div>`:`
+      <div class="ind-row"><span class="ind-name">累計買進股數</span><span class="ind-val">${fmtField(ins.totalAcquired,num)}</span></div>
+      <div class="ind-row"><span class="ind-name">累計賣出股數</span><span class="ind-val">${fmtField(ins.totalDisposed,num)}</span></div>
+      <div class="ind-row"><span class="ind-name">淨買賣股數</span><span class="ind-val ${ins.netShares?.value>0?'up':ins.netShares?.value<0?'down':''}">${fmtField(ins.netShares,v=>(v>=0?'+':'')+num(v))}</span></div>
+      <div class="src-note" style="margin-top:6px">內部人（高管／大股東）交易須於2個營業日內申報，僅反映有申報的交易，非每日加總。</div>`}
+    </div>
+  </div>
+  <div class="disclaimer">⚠ 美股無台股融資融券／集保股權分散／三大法人的每日對應資料，此處以 SEC 13F／Form 4 申報資料替代。僅供參考，不構成投資建議。資料來源：FMP（SEC 官方申報彙整）。</div>`;
+}
+
 // ---- 市場情緒（貪婪指數）----
 function sentimentGaugeSVG(score,level){
   const clamped=Math.max(0,Math.min(100,score));
@@ -771,15 +811,26 @@ function buildSummaryData(info,techSummary,chipData,sentimentData){
 
   let chip=null,chipInsufficient=true;
   if(chipData){
-    const m=chipData.margin||{},h=chipData.holders||{},inst=chipData.institutional||{};
-    chip={
-      融資使用率:!m.error&&m.marginUsageRate?.value!=null?(m.marginUsageRate.value*100).toFixed(2)+'%':null,
-      券資比:!m.error&&m.shortToMarginRatio?.value!=null?(m.shortToMarginRatio.value*100).toFixed(2)+'%':null,
-      千張大戶佔比:!h.error&&h.bigHolderPct?.value!=null?h.bigHolderPct.value.toFixed(2)+'%':null,
-      大戶持股週變化:!h.error&&h.weeklyChange?.value!=null?h.weeklyChange.value.toFixed(2)+'%':null,
-      外資近5日買賣超:!inst.error&&inst.foreignNet5d?.value!=null?inst.foreignNet5d.value.toLocaleString():null,
-      投信近5日買賣超:!inst.error&&inst.trustNet5d?.value!=null?inst.trustNet5d.value.toLocaleString():null,
-    };
+    if('insider' in chipData){
+      // US shape (chip-us.js): SEC 13F institutional ownership + Form 4 insider trading
+      const inst=chipData.institutional||{},ins=chipData.insider||{};
+      chip={
+        機構持股比例:!inst.error&&inst.ownershipPercent?.value!=null?inst.ownershipPercent.value.toFixed(2)+'%':null,
+        持股機構數:!inst.error&&inst.investorsHolding?.value!=null?inst.investorsHolding.value.toLocaleString():null,
+        內部人淨買賣股數:!ins.error&&ins.netShares?.value!=null?ins.netShares.value.toLocaleString():null,
+      };
+    } else {
+      // TW shape (chip.js): 融資融券／集保股權分散／三大法人
+      const m=chipData.margin||{},h=chipData.holders||{},inst=chipData.institutional||{};
+      chip={
+        融資使用率:!m.error&&m.marginUsageRate?.value!=null?(m.marginUsageRate.value*100).toFixed(2)+'%':null,
+        券資比:!m.error&&m.shortToMarginRatio?.value!=null?(m.shortToMarginRatio.value*100).toFixed(2)+'%':null,
+        千張大戶佔比:!h.error&&h.bigHolderPct?.value!=null?h.bigHolderPct.value.toFixed(2)+'%':null,
+        大戶持股週變化:!h.error&&h.weeklyChange?.value!=null?h.weeklyChange.value.toFixed(2)+'%':null,
+        外資近5日買賣超:!inst.error&&inst.foreignNet5d?.value!=null?inst.foreignNet5d.value.toLocaleString():null,
+        投信近5日買賣超:!inst.error&&inst.trustNet5d?.value!=null?inst.trustNet5d.value.toLocaleString():null,
+      };
+    }
     chipInsufficient=Object.values(chip).every(v=>v==null);
   }
 
