@@ -76,9 +76,19 @@ const seedData = [
   { etf_code: '00981A', etf_name: '統一臺灣主動成長動能ETF', stock_code: '2376', date: '2026-07-07', shares: 430000, weight: 1.6 }   // -20k (Net -40k)
 ];
 
+const priceSeeds = [];
+const priceMap = {
+  '2330': 1000, '2454': 1400, '2317': 200, '2308': 380, '2382': 320,
+  '5347': 80, '2303': 50, '2603': 200, '3231': 110, '2376': 270
+};
+for (const code in priceMap) {
+  priceSeeds.push(`INSERT OR REPLACE INTO stock_daily_price (code, date, close) VALUES ('${code}', '2026-07-06', ${priceMap[code]});`);
+  priceSeeds.push(`INSERT OR REPLACE INTO stock_daily_price (code, date, close) VALUES ('${code}', '2026-07-07', ${priceMap[code]});`);
+}
+
 const sqlStatements = seedData.map(d => {
   return `INSERT OR REPLACE INTO active_etf_holdings (etf_code, etf_name, stock_code, date, shares, weight) VALUES ('${d.etf_code}', '${d.etf_name}', '${d.stock_code}', '${d.date}', ${d.shares}, ${d.weight});`;
-}).join('\n');
+}).concat(priceSeeds).join('\n');
 
 const tempSqlFile = path.join(__dirname, 'temp_sync.sql');
 fs.writeFileSync(tempSqlFile, sqlStatements, 'utf8');

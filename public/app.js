@@ -734,6 +734,13 @@ function renderChip(data, etfData){
   const pct=v=>(v*100).toFixed(2)+'%';
   const num=v=>Number(v).toLocaleString();
 
+  const fmtAmt = v => {
+    const abs = Math.abs(v);
+    if (abs >= 1e8) return (v / 1e8).toFixed(2) + ' 億元';
+    if (abs >= 1e4) return (v / 1e4).toFixed(0) + ' 萬元';
+    return v.toLocaleString() + ' 元';
+  };
+
   let etfHtml = '';
   if (etfData) {
     if (!etfData.flow || etfData.flow.length === 0) {
@@ -753,7 +760,7 @@ function renderChip(data, etfData){
             <tr style="border-bottom:1px solid var(--border2); text-align:left; color:var(--text3); font-size:11px; text-transform:uppercase;">
               <th style="padding:8px 10px;">主動式 ETF</th>
               <th style="padding:8px 10px;">操作</th>
-              <th style="padding:8px 10px; text-align:right;">異動股數</th>
+              <th style="padding:8px 10px; text-align:right;">異動股數 / 金額</th>
               <th style="padding:8px 10px; text-align:right;">比重變化</th>
               <th style="padding:8px 10px; text-align:right;">當日持股</th>
               <th style="padding:8px 10px; text-align:right;">當日權重</th>
@@ -764,7 +771,10 @@ function renderChip(data, etfData){
               <tr style="border-bottom:1px solid var(--border);">
                 <td style="padding:8px 10px; font-weight:600; color:var(--text);">${escapeHtml(f.etfName)} (${escapeHtml(f.etfCode)})</td>
                 <td style="padding:8px 10px;"><span class="badge ${f.changeShares > 0 ? 'badge-green' : 'badge-red'}">${escapeHtml(f.action)}</span></td>
-                <td style="padding:8px 10px; text-align:right; font-weight:700; color:${f.changeShares > 0 ? 'var(--green)' : 'var(--red)'}">${f.changeShares > 0 ? '+' : ''}${f.changeShares.toLocaleString()} 股</td>
+                <td style="padding:8px 10px; text-align:right; font-weight:700; color:${f.changeShares > 0 ? 'var(--green)' : 'var(--red)'}">
+                  <div>${f.changeShares > 0 ? '+' : ''}${f.changeShares.toLocaleString()} 股</div>
+                  <div style="font-size:10px; font-weight:normal; opacity:.7; color:${f.changeAmount > 0 ? 'var(--green)' : 'var(--red)'}">${f.changeAmount > 0 ? '+' : ''}${fmtAmt(f.changeAmount)}</div>
+                </td>
                 <td style="padding:8px 10px; text-align:right; color:${f.changeWeight > 0 ? 'var(--green)' : 'var(--red)'}">${f.changeWeight > 0 ? '+' : ''}${f.changeWeight.toFixed(2)}%</td>
                 <td style="padding:8px 10px; text-align:right; color:var(--text2);">${f.shares.toLocaleString()} 股</td>
                 <td style="padding:8px 10px; text-align:right; color:var(--text2);">${f.weight.toFixed(2)}%</td>

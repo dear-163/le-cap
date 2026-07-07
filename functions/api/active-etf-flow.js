@@ -24,6 +24,22 @@ export async function onRequestGet(context) {
     const todayDate = dateRows.results[0].date;
     const yesterdayDate = dateRows.results[1] ? dateRows.results[1].date : null;
 
+    // Fetch daily price mappings
+    const priceRows = await env.ELAN_QUANT_DB
+      .prepare('SELECT code, close FROM stock_daily_price')
+      .all();
+    const priceMap = {};
+    if (priceRows.results) {
+      for (const p of priceRows.results) {
+        priceMap[p.code] = p.close;
+      }
+    }
+
+    const MOCK_PRICES = {
+      '2330': 1000, '2454': 1400, '2317': 200, '2308': 380, '2382': 320,
+      '5347': 80, '2303': 50, '2603': 200, '3231': 110, '2376': 270
+    };
+
     // IF symbol is specified: return specific stock flow (Option A)
     if (symbol) {
       const match = symbol.match(/^(\d{4,6})/);
@@ -31,6 +47,7 @@ export async function onRequestGet(context) {
         return json({ date: todayDate, symbol, flow: [], note: '非台股純數字代號，暫不支援主動式 ETF 追蹤。' });
       }
       const stockCode = match[1];
+      const price = priceMap[stockCode] || MOCK_PRICES[stockCode] || 100;
 
       // Query database for this stock on these dates
       const querySql = yesterdayDate
@@ -83,6 +100,7 @@ export async function onRequestGet(context) {
           weight: t ? t.weight : 0,
           changeShares,
           changeWeight,
+          changeAmount: changeShares * price,
           date: todayDate,
           comparedTo: yesterdayDate
         });
@@ -119,18 +137,21 @@ export async function onRequestGet(context) {
     for (const code in stockChanges) {
       const item = stockChanges[code];
       const changeShares = item.todayShares - item.yesterdayShares;
+      const price = priceMap[code] || MOCK_PRICES[code] || 100;
+      const changeAmount = changeShares * price;
       if (changeShares !== 0) {
         changes.push({
           stock_code: code,
           changeShares,
-          action: changeShares > 0 ? '買超' : '賣超'
+          changeAmount,
+          action: changeAmount > 0 ? '買超' : '賣超'
         });
       }
     }
 
-    // Sort to find top buys and sells
-    const buys = changes.filter(c => c.changeShares > 0).sort((a, b) => b.changeShares - a.changeShares).slice(0, 5);
-    const sells = changes.filter(c => c.changeShares < 0).sort((a, b) => a.changeShares - b.changeShares).slice(0, 5);
+    // Sort to find top buys and sells by changeAmount
+    const buys = changes.filter(c => c.changeAmount > 0).sort((a, b) => b.changeAmount - a.changeAmount).slice(0, 5);
+    const sells = changes.filter(c => c.changeAmount < 0).sort((a, b) => a.changeAmount - b.changeAmount).slice(0, 5);
 
     return json({
       date: todayDate,
