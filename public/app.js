@@ -771,8 +771,47 @@ function renderChip(data, etfData, lc){
       <div class="ind-card" style="grid-column: 1 / -1; margin-top: 16px;">
         <div class="ind-title">🤖 主動式 ETF 經理人當日加減碼動態</div>
         <div style="font-size:12px; color:var(--text3); padding:20px 0; text-align:center;">
-          今日此個股尚未被納入主動式 ETF 經理人的當日加減碼申報明細（或今日無持股變動）。
+          今日此標的尚未被納入主動式 ETF 經理人的當日加減碼申報明細（或今日無持股變動）。
         </div>
+      </div>`;
+    } else if (etfData.isEtf) {
+      etfHtml = `
+      <div class="ind-card" style="grid-column: 1 / -1; margin-top: 16px;">
+        <div class="ind-title">🤖 ${escapeHtml(etfData.etfName)} (${escapeHtml(etfData.etfCode)}) 當日持股與加減碼明細</div>
+        <table style="width:100%; border-collapse:collapse; margin-top:10px; font-size:13px;">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border2); text-align:left; color:var(--text3); font-size:11px; text-transform:uppercase;">
+              <th style="padding:8px 10px;">持股個股</th>
+              <th style="padding:8px 10px;">操作</th>
+              <th style="padding:8px 10px; text-align:right;">加減碼股數 / 金額</th>
+              <th style="padding:8px 10px; text-align:right;">比重變化</th>
+              <th style="padding:8px 10px; text-align:right;">當日持股 / 金額</th>
+              <th style="padding:8px 10px; text-align:right;">當日權重</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${etfData.flow.map(f => {
+              const hasBuy = f.changeShares > 0;
+              return `
+              <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:8px 10px; font-weight:600; color:var(--blue); cursor:pointer;" onclick="quickLoad('${escapeHtml(f.stockCode)}.TW')">${escapeHtml(f.stockName)} (${escapeHtml(f.stockCode)})</td>
+                <td style="padding:8px 10px;"><span class="badge ${hasBuy ? 'badge-green' : 'badge-red'}">${escapeHtml(f.action)}</span></td>
+                <td style="padding:8px 10px; text-align:right; font-weight:700; color:${hasBuy ? 'var(--green)' : 'var(--red)'}">
+                  <div>${hasBuy ? '+' : ''}${f.changeShares.toLocaleString()} 股</div>
+                  <div style="font-size:10px; font-weight:normal; opacity:.7; color:${f.changeAmount > 0 ? 'var(--green)' : 'var(--red)'}">${f.changeAmount > 0 ? '+' : ''}${fmtAmt(f.changeAmount)}</div>
+                </td>
+                <td style="padding:8px 10px; text-align:right; color:${f.changeWeight > 0 ? 'var(--green)' : 'var(--red)'}">${f.changeWeight > 0 ? '+' : ''}${f.changeWeight.toFixed(2)}%</td>
+                <td style="padding:8px 10px; text-align:right; color:var(--text2);">
+                  <div>${f.shares.toLocaleString()} 股</div>
+                  <div style="font-size:10px; opacity:.7;">${fmtAmt(f.totalAmount)}</div>
+                </td>
+                <td style="padding:8px 10px; text-align:right; color:var(--text2);">${f.weight.toFixed(2)}%</td>
+              </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+        <div class="src-note" style="margin-top:8px;">申報基準日：${escapeHtml(etfData.date)}，前一日：${escapeHtml(etfData.comparedTo || '無歷史資料')}</div>
       </div>`;
     } else {
       etfHtml = `
@@ -793,12 +832,13 @@ function renderChip(data, etfData, lc){
             ${etfData.flow.map(f => {
               const changeAmount = f.changeShares * lc;
               const totalAmount = f.shares * lc;
+              const hasBuy = f.changeShares > 0;
               return `
               <tr style="border-bottom:1px solid var(--border);">
                 <td style="padding:8px 10px; font-weight:600; color:var(--text);">${escapeHtml(f.etfName)} (${escapeHtml(f.etfCode)})</td>
-                <td style="padding:8px 10px;"><span class="badge ${f.changeShares > 0 ? 'badge-green' : 'badge-red'}">${escapeHtml(f.action)}</span></td>
-                <td style="padding:8px 10px; text-align:right; font-weight:700; color:${f.changeShares > 0 ? 'var(--green)' : 'var(--red)'}">
-                  <div>${f.changeShares > 0 ? '+' : ''}${f.changeShares.toLocaleString()} 股</div>
+                <td style="padding:8px 10px;"><span class="badge ${hasBuy ? 'badge-green' : 'badge-red'}">${escapeHtml(f.action)}</span></td>
+                <td style="padding:8px 10px; text-align:right; font-weight:700; color:${hasBuy ? 'var(--green)' : 'var(--red)'}">
+                  <div>${hasBuy ? '+' : ''}${f.changeShares.toLocaleString()} 股</div>
                   <div style="font-size:10px; font-weight:normal; opacity:.7; color:${changeAmount > 0 ? 'var(--green)' : 'var(--red)'}">${changeAmount > 0 ? '+' : ''}${fmtAmt(changeAmount)}</div>
                 </td>
                 <td style="padding:8px 10px; text-align:right; color:${f.changeWeight > 0 ? 'var(--green)' : 'var(--red)'}">${f.changeWeight > 0 ? '+' : ''}${f.changeWeight.toFixed(2)}%</td>

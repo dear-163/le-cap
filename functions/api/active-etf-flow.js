@@ -40,8 +40,88 @@ export async function onRequestGet(context) {
       '5347': 80, '2303': 50, '2603': 200, '3231': 110, '2376': 270
     };
 
-    // IF symbol is specified: return specific stock flow (Option A)
+    // IF symbol is specified: return specific stock flow or active ETF flow (Option A/C)
     if (symbol) {
+      const cleanSymbol = symbol.replace(/\.(TW|TWO)$/i, '');
+      const isEtf = /^\d{5}[A-Z]$/i.test(cleanSymbol);
+
+      const STOCK_NAMES = {
+        '2330': '台積電', '2454': '聯發科', '2317': '鴻海', '2308': '台達電', '2382': '廣達',
+        '5347': '世界先進', '2303': '聯電', '2603': '長榮', '3231': '緯創', '2376': '技嘉'
+      };
+
+      if (isEtf) {
+        const etfCode = cleanSymbol;
+        const querySql = yesterdayDate
+          ? 'SELECT stock_code, shares, weight, date, etf_name FROM active_etf_holdings WHERE etf_code = ? AND date IN (?, ?)'
+          : 'SELECT stock_code, shares, weight, date, etf_name FROM active_etf_holdings WHERE etf_code = ? AND date = ?';
+        
+        const bindings = yesterdayDate ? [etfCode, todayDate, yesterdayDate] : [etfCode, todayDate];
+        const records = await env.ELAN_QUANT_DB.prepare(querySql).bind(...bindings).all();
+        const list = records.results || [];
+        
+        const etfName = list[0]?.etf_name || '主動式 ETF';
+        const stockMap = {};
+        for (const r of list) {
+          if (!stockMap[r.stock_code]) {
+            stockMap[r.stock_code] = { stock_code: r.stock_code, today: null, yesterday: null };
+          }
+          if (r.date === todayDate) stockMap[r.stock_code].today = r;
+          else stockMap[r.stock_code].yesterday = r;
+        }
+
+        const flow = [];
+        for (const code in stockMap) {
+          const item = stockMap[code];
+          const t = item.today;
+          const y = item.yesterday;
+
+          let changeShares = 0;
+          let changeWeight = 0;
+          let action = '無變動';
+
+          if (t && y) {
+            changeShares = t.shares - y.shares;
+            changeWeight = t.weight - y.weight;
+          } else if (t) {
+            changeShares = t.shares;
+            changeWeight = t.weight;
+          } else if (y) {
+            changeShares = -y.shares;
+            changeWeight = -y.weight;
+          }
+
+          if (changeShares > 0) action = '加碼';
+          else if (changeShares < 0) action = '減碼';
+
+          const price = priceMap[code] || MOCK_PRICES[code] || 100;
+
+          flow.push({
+            stockCode: code,
+            stockName: STOCK_NAMES[code] || `個股 ${code}`,
+            action,
+            shares: t ? t.shares : 0,
+            weight: t ? t.weight : 0,
+            changeShares,
+            changeWeight,
+            changeAmount: changeShares * price,
+            totalAmount: (t ? t.shares : 0) * price,
+            date: todayDate,
+            comparedTo: yesterdayDate
+          });
+        }
+
+        return json({
+          date: todayDate,
+          comparedTo: yesterdayDate,
+          isEtf: true,
+          etfCode,
+          etfName,
+          flow: flow.filter(f => f.changeShares !== 0 || f.shares > 0)
+        });
+      }
+
+      // Default stock query
       const match = symbol.match(/^(\d{4,6})/);
       if (!match) {
         return json({ date: todayDate, symbol, flow: [], note: '非台股純數字代號，暫不支援主動式 ETF 追蹤。' });
