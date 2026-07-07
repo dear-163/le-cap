@@ -225,7 +225,12 @@ function calcTechSignals(data, info) {
   else if (buys >= 2) { oSig = '偏多訊號'; oClass = 'BUY'; oSub = '趨勢與動能指標偏向買方'; }
   else if (sells >= 2) { oSig = '偏空訊號'; oClass = 'SELL'; oSub = '趨勢與動能指標偏向賣方'; }
   
-  return { sig, oSig, oClass, oSub, lRSI, lK, lD, lMACD, lSig, lHist: last(hist), lMA5, lMA20, lBB };
+  return { 
+    sig, oSig, oClass, oSub, 
+    lRSI, lK, lD, lMACD, lSig, lHist: last(hist), lMA5, lMA20, lBB, 
+    buys, sells, ob, os,
+    rsi, macdLine, sig2: signal, hist, bb, ma5, ma20
+  };
 }
 
 function buildTechSummary(sym,data,info){
@@ -312,8 +317,13 @@ function renderTech(symbol,data,info){
   const lMA10=last(ma10),lMA60=last(ma60);
   const lc=c[c.length-1],pc=c[c.length-2]??lc,chg=lc-pc,chgPct=chg/pc*100;
   
+  const labels=data.map(d=>d.date.toLocaleDateString('zh-TW',{month:'short',day:'numeric'}));
   const signals=calcTechSignals(data,info);
-  const {sig,oSig,oClass,oSub,lRSI,lK,lD,lMACD,lSig,lHist,lMA5,lMA20,lBB}=signals;
+  const {
+    sig,oSig,oClass,oSub,lRSI,lK,lD,lMACD,lSig,lHist,lMA5,lMA20,lBB,
+    buys,sells,ob,os,
+    rsi,macdLine,sig2,hist,bb,ma5,ma20
+  }=signals;
   const cn=info.longName||info.shortName||symbol,cur=info.currency||'';
   const fmtVol=v=>v&&v>0?(v>=1e9?(v/1e9).toFixed(1)+'B':v>=1e6?(v/1e6).toFixed(1)+'M':Number(v).toLocaleString()):'N/A';
   const fmtCap=v=>v&&v>0?(v>=1e12?(v/1e12).toFixed(2)+'T':v>=1e9?(v/1e9).toFixed(1)+'B':(v/1e6).toFixed(0)+'M'):'N/A';
