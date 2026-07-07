@@ -245,19 +245,25 @@ function buildTechSummary(sym,data,info){
   const lc=c[c.length-1],pc=c[c.length-2]??lc;
   const allHighs=data.map(d=>d.high).filter(Boolean);
   const allLows=data.map(d=>d.low).filter(Boolean);
-  const h52=info.fiftyTwoWeekHigh||(allHighs.length?Math.max(...allHighs).toFixed(2):'N/A');
-  const l52=info.fiftyTwoWeekLow||(allLows.length?Math.min(...allLows).toFixed(2):'N/A');
-  const fmtPct=v=>v!=null?(v*100).toFixed(1)+'%':'N/A';
+  const h52=typeof info.fiftyTwoWeekHigh==='number'?info.fiftyTwoWeekHigh.toFixed(2):(allHighs.length?Math.max(...allHighs).toFixed(2):'N/A');
+  const l52=typeof info.fiftyTwoWeekLow==='number'?info.fiftyTwoWeekLow.toFixed(2):(allLows.length?Math.min(...allLows).toFixed(2):'N/A');
+  const fmtPct=v=>typeof v==='number'?(v*100).toFixed(1)+'%':'N/A';
   
   const signals=calcTechSignals(data,info);
   
+  const mCapVal=typeof info.marketCap==='number'?Number(info.marketCap).toLocaleString():'N/A';
+  const peVal=typeof info.trailingPE==='number'?info.trailingPE.toFixed(1):'N/A';
+  const fpeVal=typeof info.forwardPE==='number'?info.forwardPE.toFixed(1):'N/A';
+  const epsVal=(info.trailingEps!=null&&typeof info.trailingEps!=='object')?info.trailingEps:'N/A';
+  const yieldVal=typeof info.dividendYield==='number'?(info.dividendYield*100).toFixed(2)+'%':'N/A';
+
   return `股票：${sym}（${info.longName||sym}）
 收盤價：${lc.toFixed(2)} ${info.currency||''}，日漲跌：${((lc-pc)/pc*100).toFixed(2)}%
 整體技術訊號：${signals.oSig}（${signals.oSub}）
 52週高/低：${h52} / ${l52}
-市值：${info.marketCap?Number(info.marketCap).toLocaleString():'N/A'}
-本益比(TTM)：${info.trailingPE||'N/A'}，預估本益比：${info.forwardPE||'N/A'}
-EPS：${info.trailingEps||'N/A'}，殖利率：${info.dividendYield?(info.dividendYield*100).toFixed(2)+'%':'N/A'}
+市值：${mCapVal}
+本益比(TTM)：${peVal}，預估本益比：${fpeVal}
+EPS：${epsVal}，殖利率：${yieldVal}
 毛利率：${fmtPct(info.grossMargins)}，營業利益率：${fmtPct(info.operatingMargins)}
 RSI(14)=${fmt(signals.lRSI,1)}，K=${fmt(signals.lK,1)} D=${fmt(signals.lD,1)}
 MACD=${fmt(signals.lMACD,4)}，Signal=${fmt(signals.lSig,4)}，Hist=${fmt(signals.lHist,4)}
@@ -346,7 +352,7 @@ function renderTech(symbol,data,info){
   const allLows=data.map(d=>d.low).filter(Boolean);
   const h52=info.fiftyTwoWeekHigh||(allHighs.length?Math.max(...allHighs):null);
   const l52=info.fiftyTwoWeekLow||(allLows.length?Math.min(...allLows):null);
-  const pe=info.trailingPE?info.trailingPE.toFixed(1):'N/A';
+  const pe=typeof info.trailingPE==='number'?info.trailingPE.toFixed(1):'N/A';
   const mktCap=fmtCap(info.marketCap);
   const vol=fmtVol(dayVol);
   const ratingVal=info.analystRating||info.recommendationKey||'N/A';
@@ -385,11 +391,11 @@ function renderTech(symbol,data,info){
     <div class="kpi"><div class="kpi-label">均量 (10日)</div><div class="kpi-val">${fmtVol(avgVol)}</div></div>
     <div class="kpi"><div class="kpi-label">市值</div><div class="kpi-val">${mktCap}</div></div>
     <div class="kpi"><div class="kpi-label">本益比 (TTM)</div><div class="kpi-val">${pe}</div></div>
-    <div class="kpi"><div class="kpi-label">預估本益比</div><div class="kpi-val">${info.forwardPE?info.forwardPE.toFixed(1):'N/A'}</div></div>
-    <div class="kpi"><div class="kpi-label">EPS (TTM)</div><div class="kpi-val">${info.trailingEps?fmt(info.trailingEps):'N/A'}</div></div>
-    <div class="kpi"><div class="kpi-label">股價淨值比</div><div class="kpi-val">${info.priceToBook?info.priceToBook.toFixed(2):'N/A'}</div></div>
-    <div class="kpi"><div class="kpi-label">殖利率</div><div class="kpi-val ${info.dividendYield?'up':''}">${info.dividendYield?(info.dividendYield*100).toFixed(2)+'%':'N/A'}</div></div>
-    <div class="kpi"><div class="kpi-label">Beta</div><div class="kpi-val">${info.beta?info.beta.toFixed(2):'N/A'}</div></div>
+    <div class="kpi"><div class="kpi-label">預估本益比</div><div class="kpi-val">${typeof info.forwardPE==='number'?info.forwardPE.toFixed(1):'N/A'}</div></div>
+    <div class="kpi"><div class="kpi-label">EPS (TTM)</div><div class="kpi-val">${(info.trailingEps!=null&&typeof info.trailingEps!=='object')?fmt(info.trailingEps):'N/A'}</div></div>
+    <div class="kpi"><div class="kpi-label">股價淨值比</div><div class="kpi-val">${typeof info.priceToBook==='number'?info.priceToBook.toFixed(2):'N/A'}</div></div>
+    <div class="kpi"><div class="kpi-label">殖利率</div><div class="kpi-val ${typeof info.dividendYield==='number'?'up':''}">${typeof info.dividendYield==='number'?(info.dividendYield*100).toFixed(2)+'%':'N/A'}</div></div>
+    <div class="kpi"><div class="kpi-label">Beta</div><div class="kpi-val">${typeof info.beta==='number'?info.beta.toFixed(2):'N/A'}</div></div>
     <div class="kpi"><div class="kpi-label">分析師評級</div><div class="kpi-val ${info.analystRating?'up':''}">${ratingVal}</div>${ratingNote?`<div class="kpi-sub">${ratingNote}</div>`:''}</div>
     <div class="kpi"><div class="kpi-label">52週高</div><div class="kpi-val down">${typeof h52==='number'?fmt(h52):h52}</div></div>
     <div class="kpi"><div class="kpi-label">52週低</div><div class="kpi-val up">${typeof l52==='number'?fmt(l52):l52}</div></div>
@@ -835,10 +841,12 @@ function renderSentiment(data){
 // ---- AI 綜合摘要（技術面＋基本面＋籌碼面＋市場情緒）----
 function buildSummaryData(info,techSummary,chipData,sentimentData,data){
   const fundamental={
-    本益比:info.trailingPE??null, 預估本益比:info.forwardPE??null, 股價淨值比:info.priceToBook??null,
-    殖利率:info.dividendYield!=null?(info.dividendYield*100).toFixed(2)+'%':null,
-    毛利率:info.grossMargins!=null?(info.grossMargins*100).toFixed(1)+'%':null,
-    營業利益率:info.operatingMargins!=null?(info.operatingMargins*100).toFixed(1)+'%':null,
+    本益比:typeof info.trailingPE==='number'?info.trailingPE.toFixed(1):null,
+    預估本益比:typeof info.forwardPE==='number'?info.forwardPE.toFixed(1):null,
+    股價淨值比:typeof info.priceToBook==='number'?info.priceToBook.toFixed(2):null,
+    殖利率:typeof info.dividendYield==='number'?(info.dividendYield*100).toFixed(2)+'%':null,
+    毛利率:typeof info.grossMargins==='number'?(info.grossMargins*100).toFixed(1)+'%':null,
+    營業利益率:typeof info.operatingMargins==='number'?(info.operatingMargins*100).toFixed(1)+'%':null,
     產業:info.sector||null,
   };
   const fundamentalInsufficient=Object.values(fundamental).every(v=>v==null);
