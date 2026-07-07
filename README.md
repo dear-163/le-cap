@@ -135,6 +135,15 @@ curl "http://localhost:8787/__scheduled?cron=0+11+*+*+1-5"
 
 本機會用 wrangler 自己模擬的本地 D1，跟 Pages 專案本機開發用的 D1 是分開的（本機測試 `/api/sentiment` 需要另外綁定同一個本地 D1 才看得到資料，或直接在雲端環境測試）。
 
+## 邊緣快取（Cache API）
+
+`quote.js`／`chip.js`／`sentiment.js`／`ground.js` 都用 `caches.default` 做邊緣快取，降低對上游（Yahoo/FMP/TWSE/TDCC）與 D1 的重複請求量：
+
+- `quote.js`：45 秒（報價本來就會變動，只是抵擋短時間內的重複請求）。
+- `chip.js`：300 秒（融資融券／大戶持股／三大法人買賣超一天最多更新一次，但這支一次要解析近 68k 行的 TDCC CSV 加上最多 12 次 T86 查詢，很值得擋）。
+- `sentiment.js`：600 秒（全站共用同一份結果，只有 `worker-cron` 每天寫入 D1 時才會變）。D1 尚未綁定時回傳的訊息**不快取**，避免綁定完成後還被卡住顯示舊訊息。
+- `ground.js`：只快取真的抓到 FMP 資料的情況（1 小時）。訪客沒有自己的 FMP Key 時的「暫無資料」提示**刻意不快取**——否則會卡住之後其他有 Key 的訪客，讓他們在快取有效期間也看不到真實資料。
+
 ## Gemini 3.x 的 thinking tokens
 
 `gemini-3.5-flash`／`gemini-3.5-pro` 是會「思考」的模型，`maxOutputTokens` 的額度會被隱藏的推理過程（`thoughtsTokenCount`）吃掉一部分，才輪到真正要顯示的文字。目前設定 `maxOutputTokens: 4096` 搭配 `generationConfig.thinkingConfig.thinkingLevel: 'low'`（壓低思考程度，把額度留給輸出內容）。如果之後又出現回應被截斷（`finishReason: "MAX_TOKENS"`），先檢查是不是這兩個值需要再往上調。
