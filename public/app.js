@@ -1127,19 +1127,26 @@ async function loadActiveEtfRankings() {
 
     if (buys.length === 0 && sells.length === 0) return;
 
+    const fmtAmt = v => {
+      const abs = Math.abs(v);
+      if (abs >= 1e8) return (v / 1e8).toFixed(2) + ' 億元';
+      if (abs >= 1e4) return (v / 1e4).toFixed(0) + ' 萬元';
+      return v.toLocaleString() + ' 元';
+    };
+
     document.getElementById('activeEtfRankingsDate').textContent = date ? `更新日期：${date}` : '';
     
     const buysHtml = buys.map(b => `
       <div style="display:flex; justify-content:space-between; align-items:center; padding: 4px 0; border-bottom: 1px dashed var(--border);">
         <span style="font-weight:600; cursor:pointer; color:var(--text);" onclick="quickLoad('${escapeHtml(b.stock_code)}')">${escapeHtml(b.stock_code)}</span>
-        <span class="up" style="font-weight:700;">+${(b.changeShares / 1000).toFixed(0)} 千股</span>
+        <span class="up" style="font-weight:700;">+${fmtAmt(b.changeAmount)}</span>
       </div>
     `).join('') || '<div style="color:var(--text3); text-align:center;">今日尚無買超記錄</div>';
 
     const sellsHtml = sells.map(s => `
       <div style="display:flex; justify-content:space-between; align-items:center; padding: 4px 0; border-bottom: 1px dashed var(--border);">
         <span style="font-weight:600; cursor:pointer; color:var(--text);" onclick="quickLoad('${escapeHtml(s.stock_code)}')">${escapeHtml(s.stock_code)}</span>
-        <span class="down" style="font-weight:700;">${(s.changeShares / 1000).toFixed(0)} 千股</span>
+        <span class="down" style="font-weight:700;">${fmtAmt(s.changeAmount)}</span>
       </div>
     `).join('') || '<div style="color:var(--text3); text-align:center;">今日尚無賣超記錄</div>';
 
