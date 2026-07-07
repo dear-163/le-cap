@@ -24,6 +24,19 @@ export async function onRequestGet(context) {
     const todayDate = dateRows.results[0].date;
     const yesterdayDate = dateRows.results[1] ? dateRows.results[1].date : null;
 
+    // "最新兩個日期" 是全表共用的，但個別 ETF 不一定兩個日期都有資料（例如剛換資料來源、
+    // 或某天爬蟲失敗）。如果某檔 ETF 昨天完全沒有任何持股紀錄，不能把它今天的每一檔持股都當成
+    // 「昨天是 0 股，今天全部都是新買進」——那只是我們昨天沒抓到資料，不是真的建倉。這種情況下
+    // 該 ETF 今天的比較要整批視為「無比較資料」，而不是逐檔算出一個看起來像加碼的假訊號。
+    let etfsWithYesterdayData = new Set();
+    if (yesterdayDate) {
+      const etfYRows = await env.ELAN_QUANT_DB
+        .prepare('SELECT DISTINCT etf_code FROM active_etf_holdings WHERE date = ?')
+        .bind(yesterdayDate)
+        .all();
+      etfsWithYesterdayData = new Set((etfYRows.results || []).map(r => r.etf_code));
+    }
+
     // Fetch each code's most recent close only (not the full 245-day history) — a plain
     // unordered SELECT here previously let whichever row D1 happened to return last for a
     // given code win, which in practice was often a stale price over a year old (e.g. TSMC's
@@ -62,6 +75,7 @@ export async function onRequestGet(context) {
         const records = await env.ELAN_QUANT_DB.prepare(querySql).bind(...bindings).all();
         const list = records.results || [];
         
+        const etfHasYesterday = etfsWithYesterdayData.has(etfCode);
         const etfName = list[0]?.etf_name || '主動式 ETF';
         const stockMap = {};
         for (const r of list) {
@@ -80,20 +94,15 @@ export async function onRequestGet(context) {
 
           if (!t) continue;
 
-          let changeShares = 0;
-          let changeWeight = 0;
-          let action = '無變動';
+          let changeShares = null;
+          let changeWeight = null;
+          let action = '無比較資料';
 
-          if (t && y) {
-            changeShares = t.shares - y.shares;
-            changeWeight = t.weight - y.weight;
-          } else if (t) {
-            changeShares = t.shares;
-            changeWeight = t.weight;
+          if (etfHasYesterday) {
+            changeShares = y ? t.shares - y.shares : t.shares;
+            changeWeight = y ? t.weight - y.weight : t.weight;
+            action = changeShares > 0 ? '加碼' : (changeShares < 0 ? '減碼' : '無變動');
           }
-
-          if (changeShares > 0) action = '加碼';
-          else if (changeShares < 0) action = '減碼';
 
           const price = priceMap[code] || null;
 
@@ -105,20 +114,20 @@ export async function onRequestGet(context) {
             weight: t ? t.weight : 0,
             changeShares,
             changeWeight,
-            changeAmount: price != null ? changeShares * price : null,
+            changeAmount: (price != null && changeShares != null) ? changeShares * price : null,
             totalAmount: price != null ? (t ? t.shares : 0) * price : null,
             date: todayDate,
-            comparedTo: yesterdayDate
+            comparedTo: etfHasYesterday ? yesterdayDate : null
           });
         }
 
         return json({
           date: todayDate,
-          comparedTo: yesterdayDate,
+          comparedTo: etfHasYesterday ? yesterdayDate : null,
           isEtf: true,
           etfCode,
           etfName,
-          flow: flow.filter(f => f.changeShares !== 0 || f.shares > 0)
+          flow: etfHasYesterday ? flow.filter(f => f.changeShares !== 0 || f.shares > 0) : flow
         });
       }
 
@@ -154,24 +163,25 @@ export async function onRequestGet(context) {
         const item = etfMap[code];
         const t = item.today;
         const y = item.yesterday;
+        const etfHasYesterday = etfsWithYesterdayData.has(item.etf_code);
 
-        let changeShares = 0;
-        let changeWeight = 0;
-        let action = '無變動';
+        let changeShares = null;
+        let changeWeight = null;
+        let action = '無比較資料';
 
-        if (t && y) {
-          changeShares = t.shares - y.shares;
-          changeWeight = t.weight - y.weight;
-        } else if (t) {
-          changeShares = t.shares;
-          changeWeight = t.weight;
-        } else if (y) {
-          changeShares = -y.shares;
-          changeWeight = -y.weight;
+        if (etfHasYesterday) {
+          if (t && y) {
+            changeShares = t.shares - y.shares;
+            changeWeight = t.weight - y.weight;
+          } else if (t) {
+            changeShares = t.shares;
+            changeWeight = t.weight;
+          } else if (y) {
+            changeShares = -y.shares;
+            changeWeight = -y.weight;
+          }
+          action = changeShares > 0 ? '買進' : (changeShares < 0 ? '賣出' : '無變動');
         }
-
-        if (changeShares > 0) action = '買進';
-        else if (changeShares < 0) action = '賣出';
 
         flow.push({
           etfCode: item.etf_code,
@@ -181,9 +191,9 @@ export async function onRequestGet(context) {
           weight: t ? t.weight : 0,
           changeShares,
           changeWeight,
-          changeAmount: price != null ? changeShares * price : null,
+          changeAmount: (price != null && changeShares != null) ? changeShares * price : null,
           date: todayDate,
-          comparedTo: yesterdayDate
+          comparedTo: etfHasYesterday ? yesterdayDate : null
         });
       }
 
@@ -204,9 +214,12 @@ export async function onRequestGet(context) {
     const allRecords = await env.ELAN_QUANT_DB.prepare(allQuery).bind(...allBindings).all();
     const recordsList = allRecords.results || [];
 
-    // Group by stock_code
+    // Group by stock_code — skip any ETF that has no yesterday-dated rows at all (e.g. just
+    // switched data source, or a one-off cron failure) so it doesn't get diffed against an
+    // effectively-empty baseline and show up as a fake full-position "buy".
     const stockChanges = {};
     for (const r of recordsList) {
+      if (!etfsWithYesterdayData.has(r.etf_code)) continue;
       if (!stockChanges[r.stock_code]) {
         stockChanges[r.stock_code] = { stock_code: r.stock_code, todayShares: 0, yesterdayShares: 0 };
       }

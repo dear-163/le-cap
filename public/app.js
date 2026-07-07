@@ -809,15 +809,17 @@ function renderChip(data, etfData, lc){
               const wtColor = f.changeWeight > 0 ? 'var(--red)' : (f.changeWeight < 0 ? 'var(--green)' : 'var(--text3)');
               const amtSign = f.changeAmount > 0 ? '+' : '';
               const wtSign = f.changeWeight > 0 ? '+' : '';
+              const changeSharesTxt = f.changeShares != null ? `${sign}${f.changeShares.toLocaleString()} 股` : '無比較資料';
+              const changeWeightTxt = f.changeWeight != null ? `${wtSign}${f.changeWeight.toFixed(2)}%` : '—';
               return `
               <tr style="border-bottom:1px solid var(--border);">
                 <td style="padding:8px 10px; font-weight:600; color:var(--blue); cursor:pointer;" onclick="quickLoad('${escapeHtml(f.stockCode)}.TW')">${escapeHtml(f.stockName)} (${escapeHtml(f.stockCode)})</td>
                 <td style="padding:8px 10px;"><span class="badge ${badgeClass}">${escapeHtml(f.action)}</span></td>
                 <td style="padding:8px 10px; text-align:right; font-weight:700; color:${colorStyle};">
-                  <div>${sign}${f.changeShares.toLocaleString()} 股</div>
+                  <div>${changeSharesTxt}</div>
                   <div style="font-size:10px; font-weight:normal; opacity:.7; color:${amtColor};">${amtSign}${fmtAmt(f.changeAmount)}</div>
                 </td>
-                <td style="padding:8px 10px; text-align:right; color:${wtColor};">${wtSign}${f.changeWeight.toFixed(2)}%</td>
+                <td style="padding:8px 10px; text-align:right; color:${wtColor};">${changeWeightTxt}</td>
                 <td style="padding:8px 10px; text-align:right; color:var(--text2);">
                   <div>${f.shares.toLocaleString()} 股</div>
                   <div style="font-size:10px; opacity:.7;">${fmtAmt(f.totalAmount)}</div>
@@ -847,7 +849,7 @@ function renderChip(data, etfData, lc){
           </thead>
           <tbody>
             ${etfData.flow.map(f => {
-              const changeAmount = f.changeShares * lc;
+              const changeAmount = f.changeShares != null ? f.changeShares * lc : null;
               const totalAmount = f.shares * lc;
               let badgeClass = 'badge-amber';
               let colorStyle = 'var(--text3)';
@@ -865,15 +867,17 @@ function renderChip(data, etfData, lc){
               const wtColor = f.changeWeight > 0 ? 'var(--red)' : (f.changeWeight < 0 ? 'var(--green)' : 'var(--text3)');
               const amtSign = changeAmount > 0 ? '+' : '';
               const wtSign = f.changeWeight > 0 ? '+' : '';
+              const changeSharesTxt = f.changeShares != null ? `${sign}${f.changeShares.toLocaleString()} 股` : '無比較資料';
+              const changeWeightTxt = f.changeWeight != null ? `${wtSign}${f.changeWeight.toFixed(2)}%` : '—';
               return `
               <tr style="border-bottom:1px solid var(--border);">
                 <td style="padding:8px 10px; font-weight:600; color:var(--text);">${escapeHtml(f.etfName)} (${escapeHtml(f.etfCode)})</td>
                 <td style="padding:8px 10px;"><span class="badge ${badgeClass}">${escapeHtml(f.action)}</span></td>
                 <td style="padding:8px 10px; text-align:right; font-weight:700; color:${colorStyle};">
-                  <div>${sign}${f.changeShares.toLocaleString()} 股</div>
+                  <div>${changeSharesTxt}</div>
                   <div style="font-size:10px; font-weight:normal; opacity:.7; color:${amtColor};">${amtSign}${fmtAmt(changeAmount)}</div>
                 </td>
-                <td style="padding:8px 10px; text-align:right; color:${wtColor};">${wtSign}${f.changeWeight.toFixed(2)}%</td>
+                <td style="padding:8px 10px; text-align:right; color:${wtColor};">${changeWeightTxt}</td>
                 <td style="padding:8px 10px; text-align:right; color:var(--text2);">
                   <div>${f.shares.toLocaleString()} 股</div>
                   <div style="font-size:10px; opacity:.7;">${fmtAmt(totalAmount)}</div>

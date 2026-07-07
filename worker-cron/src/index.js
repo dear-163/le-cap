@@ -198,48 +198,93 @@ async function updateHolderSnapshotIfNewWeek(db) {
   return { skipped: false, date: tdccDate, stockCount: perCode.size };
 }
 
+// ezmoney.com.tw（統一投信官網）對第一次沒帶到反爬蟲 cookie 的請求，永遠回傳 302 重新導向
+// 回同一個網址、並在 Set-Cookie 帶一組 __nxquid——實測用這組 cookie 重打一次就能拿到完整內容，
+// 不需要更複雜的挑戰。頁面裡完整持股是用 HTML-escape 包住的一段 JSON 陣列（Nuxt SSR 資料），
+// 每檔股票是 AssetCode==="ST" 的紀錄，直接帶官方算好的 Share／Amount(市值)／NavRate(權重%)。
+async function fetchEzmoneyHoldings(fundCode) {
+  const url = `https://www.ezmoney.com.tw/ETF/Fund/Info?fundCode=${fundCode}`;
+  const headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' };
+  const primeRes = await fetch(url, { headers, redirect: 'manual' });
+  const setCookie = primeRes.headers.get('set-cookie');
+  if (!setCookie) throw new Error('ezmoney 首次請求未回傳 cookie，網站防爬機制可能已變更');
+  const cookie = setCookie.split(';')[0];
+
+  const res = await fetch(url, { headers: { ...headers, 'Cookie': cookie } });
+  if (!res.ok) throw new Error(`ezmoney HTTP ${res.status}`);
+  const html = await res.text();
+
+  const marker = '&quot;DetailCode&quot;';
+  const markerIdx = html.indexOf(marker);
+  if (markerIdx === -1) throw new Error('ezmoney 頁面內找不到持股明細區塊（版面可能已變更）');
+  const start = html.lastIndexOf('[', markerIdx);
+  let depth = 0, end = -1;
+  for (let i = start; i < html.length; i++) {
+    if (html[i] === '[') depth++;
+    else if (html[i] === ']') { depth--; if (depth === 0) { end = i + 1; break; } }
+  }
+  if (start === -1 || end === -1) throw new Error('ezmoney 持股 JSON 陣列括號不成對，解析失敗');
+
+  const unescaped = html.slice(start, end)
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+  const data = JSON.parse(unescaped);
+  return data
+    .filter(r => r.AssetCode === 'ST' && r.DetailCode)
+    .map(r => ({ stockCode: r.DetailCode, stockName: r.DetailName, shares: r.Share, weight: r.NavRate }));
+}
+
+// 野村投信官網（Angular SPA）背後直接打的 JSON API，不用解析 HTML。
+async function fetchNomuraHoldings(fundId) {
+  const res = await fetch('https://www.nomurafunds.com.tw/API/ETFAPI/api/Fund/GetFundAssets', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Referer': `https://www.nomurafunds.com.tw/ETFWEB/product-description?fundNo=${fundId}`,
+    },
+    body: JSON.stringify({ FundID: fundId, SearchDate: null }),
+  });
+  if (!res.ok) throw new Error(`野村投信 API HTTP ${res.status}`);
+  const apiRes = await res.json();
+  const table = (apiRes?.Entries?.Data?.Table || []).find(t => t.TableTitle === '股票');
+  if (!table || !Array.isArray(table.Rows)) throw new Error('野村投信 API 回應格式跟預期不符（找不到股票表格）');
+  return table.Rows.map(row => ({
+    stockCode: row[0],
+    stockName: row[1],
+    shares: parseFloat(String(row[2]).replace(/,/g, '')),
+    weight: parseFloat(row[3]),
+  }));
+}
+
 async function fetchAndStoreActiveEtfHoldings(db, todayDash) {
   const etfs = [
-    { code: '00981A', name: '主動統一台股增長主動式ETF', moneydjCode: '00981A.TW' },
-    { code: '00980A', name: '野村臺灣智慧優選主動式ETF', moneydjCode: '00980A.TW' }
+    { code: '00981A', name: '統一台股增長主動式ETF', source: 'ezmoney', fundCode: '49YTW' },
+    { code: '00980A', name: '野村臺灣智慧優選主動式ETF', source: 'nomura', fundCode: '00980A' },
   ];
 
   for (const etf of etfs) {
     try {
-      const url = `https://www.moneydj.com/etf/x/basic/basic0007.xdjhtm?etfid=${etf.moneydjCode}`;
-      const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-      if (!res.ok) {
-        console.error(`[cron-etf] Fetching ${etf.code} from MoneyDJ failed: HTTP ${res.status}`);
-        continue;
-      }
-      const html = await res.text();
-      const regex = /etfid=(\d{4,6})\.(TW|TWO)[^>]*>([^<\(]+)\(\1\.\2\)<\/a><\/td><td[^>]*>([0-9.]+)<\/td><td[^>]*>([0-9,.-]+)<\/td>/gi;
-
-      let match;
-      const holdings = [];
-      while ((match = regex.exec(html)) !== null) {
-        holdings.push({
-          stockCode: match[1],
-          weight: parseFloat(match[4]),
-          shares: parseFloat(match[5].replace(/,/g, ''))
-        });
-      }
+      const holdings = etf.source === 'ezmoney'
+        ? await fetchEzmoneyHoldings(etf.fundCode)
+        : await fetchNomuraHoldings(etf.fundCode);
 
       if (holdings.length === 0) {
         console.error(`[cron-etf] parsed 0 holdings for ${etf.code}`);
         continue;
       }
 
-      const statements = holdings.map(h => {
-        return db.prepare(
+      const statements = holdings.map(h =>
+        db.prepare(
           'INSERT OR REPLACE INTO active_etf_holdings (etf_code, etf_name, stock_code, date, shares, weight) VALUES (?, ?, ?, ?, ?, ?)'
-        ).bind(etf.code, etf.name, h.stockCode, todayDash, h.shares, h.weight);
-      });
+        ).bind(etf.code, etf.name, h.stockCode, todayDash, h.shares, h.weight)
+      );
 
       await db.batch(statements);
-      console.log(`[cron-etf] successfully stored ${holdings.length} holdings for ${etf.code} on ${todayDash}`);
+      console.log(`[cron-etf] successfully stored ${holdings.length} holdings for ${etf.code} (${etf.source}) on ${todayDash}`);
     } catch (e) {
-      console.error(`[cron-etf] Error crawling ${etf.code}:`, e.message);
+      console.error(`[cron-etf] Error crawling ${etf.code} (${etf.source}):`, e.message);
     }
   }
 }
