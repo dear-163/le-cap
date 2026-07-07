@@ -1,6 +1,12 @@
 let currentPeriod='3mo', currentSymbol='', selectedModel='gemini-3.5-flash';
 let apiKey='', fmpKey='';
 let priceChart=null, rsiChart=null, macdChart=null;
+// Bumped on every analyze() call. Quick-load tags and the Enter-key handler both call analyze()
+// directly (bypassing analyzeBtn's disabled state), so overlapping calls are easy to trigger by
+// rapid-clicking between symbols. Each call captures its own generation and checks it before every
+// DOM write, so a superseded call's late-arriving response gets silently dropped instead of
+// overwriting the current symbol's UI with stale data.
+let analyzeGeneration=0;
 
 function saveApiKey(){
   const val=document.getElementById('apiKeyInput').value.trim();
@@ -38,6 +44,7 @@ function quickLoad(sym){document.getElementById('symbolInput').value=sym;analyze
 async function analyze(){
   const sym=document.getElementById('symbolInput').value.trim().toUpperCase();
   if(!sym)return;
+  const myGen=++analyzeGeneration;
   currentSymbol=sym;
   persistSet('elan_last_symbol', sym);
   selectedModel=document.getElementById('modelSelect').value;
@@ -61,6 +68,7 @@ async function analyze(){
   try{
     document.getElementById('loadingText').textContent='正在抓取股價數據⋯';
     const {data,info}=await fetchQuote(sym,currentPeriod);
+    if(myGen!==analyzeGeneration) return; // superseded by a newer analyze() call while this was in flight
     if(!data||data.length<20) throw new Error('數據不足（台股請加 .TW，例如 2330.TW）');
 
     document.getElementById('loadingText').textContent='正在計算技術指標⋯';
@@ -77,25 +85,29 @@ async function analyze(){
 
     const techSummary=buildTechSummary(sym,data,info);
     const companyName=info.longName||info.shortName||sym;
-    if(apiKey) runGeminiAnalysis(sym,companyName,techSummary);
+    if(apiKey) runGeminiAnalysis(sym,companyName,techSummary,myGen);
 
     let chipData=null,sentimentData=null;
     // Chip and sentiment are independent data sources — fetch them concurrently instead of
     // sequentially so the wait before rendering (and before the AI summary can start) is roughly
     // halved, especially since chip.js does non-trivial work server-side (TDCC CSV parse + T86 calls).
     await Promise.all([
-      fetchChip(sym).then(d=>{ chipData=d; renderChip(d); }).catch(e=>{
+      fetchChip(sym).then(d=>{ if(myGen!==analyzeGeneration) return; chipData=d; renderChip(d); }).catch(e=>{
+        if(myGen!==analyzeGeneration) return;
         document.getElementById('chipContent').innerHTML=`<div class="error-box">⚠ 籌碼面資料取得失敗：${escapeHtml(e.message)}</div>`;
       }),
-      fetchSentiment().then(d=>{ sentimentData=d; renderSentiment(d); }).catch(e=>{
+      fetchSentiment().then(d=>{ if(myGen!==analyzeGeneration) return; sentimentData=d; renderSentiment(d); }).catch(e=>{
+        if(myGen!==analyzeGeneration) return;
         document.getElementById('sentimentContent').innerHTML=`<div class="error-box">⚠ 市場情緒指數取得失敗：${escapeHtml(e.message)}</div>`;
       }),
     ]);
+    if(myGen!==analyzeGeneration) return;
 
     if(apiKey){
-      runSummaryAnalysis(sym,companyName,techSummary,chipData,sentimentData,info);
+      runSummaryAnalysis(sym,companyName,techSummary,chipData,sentimentData,info,myGen);
     }
   }catch(e){
+    if(myGen!==analyzeGeneration) return; // a newer call is already in charge of the UI
     document.getElementById('errorBox').innerHTML='⚠ <strong>'+escapeHtml(e.message).replace(/\n/g,'<br>')+'</strong>';
     document.getElementById('errorBox').classList.remove('hidden');
     document.getElementById('loadingBox').classList.add('hidden');
@@ -461,14 +473,18 @@ async function fetchGroundingText(symbol,section){
   }
 }
 
-async function runGeminiAnalysis(symbol,companyName,techSummary){
+async function runGeminiAnalysis(symbol,companyName,techSummary,gen){
   const model=selectedModel;
   const fundGrounding=await fetchGroundingText(symbol,'fundamentals');
-  await streamGemini({prompt:buildPromptClientSide(symbol,companyName,techSummary,'fundamentals',fundGrounding),model},'fundContent','🏢 公司基本面 + 財務健康（重點一、二）',false);
+  if(gen!==analyzeGeneration) return;
+  await streamGemini({prompt:buildPromptClientSide(symbol,companyName,techSummary,'fundamentals',fundGrounding),model},'fundContent','🏢 公司基本面 + 財務健康（重點一、二）',false,0,gen);
   const valGrounding=await fetchGroundingText(symbol,'valuation');
-  await streamGemini({prompt:buildPromptClientSide(symbol,companyName,techSummary,'valuation',valGrounding),model},'fundContent','💰 估值合理性分析（重點三）',true);
-  await streamGemini({prompt:buildPromptClientSide(symbol,companyName,techSummary,'risk'),model},'riskContent','⚠️ 風險因素評估（重點四）',false);
-  await streamGemini({prompt:buildPromptClientSide(symbol,companyName,techSummary,'conclusion'),model},'conclusionContent','📋 投資結論整理（重點五）',false);
+  if(gen!==analyzeGeneration) return;
+  await streamGemini({prompt:buildPromptClientSide(symbol,companyName,techSummary,'valuation',valGrounding),model},'fundContent','💰 估值合理性分析（重點三）',true,0,gen);
+  if(gen!==analyzeGeneration) return;
+  await streamGemini({prompt:buildPromptClientSide(symbol,companyName,techSummary,'risk'),model},'riskContent','⚠️ 風險因素評估（重點四）',false,0,gen);
+  if(gen!==analyzeGeneration) return;
+  await streamGemini({prompt:buildPromptClientSide(symbol,companyName,techSummary,'conclusion'),model},'conclusionContent','📋 投資結論整理（重點五）',false,0,gen);
 }
 
 async function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
@@ -520,7 +536,8 @@ ${techSummary}
   return `${base}\n\n${PROMPT_SECTIONS[section]}${groundingText||''}`;
 }
 
-async function streamGemini(payload,targetId,cardTitle,append,retryCount=0){
+async function streamGemini(payload,targetId,cardTitle,append,retryCount=0,gen=null){
+  if(gen!=null&&gen!==analyzeGeneration) return; // superseded before we even started this section
   const el=document.getElementById(targetId);
   const cardId='gc-'+Math.random().toString(36).slice(2);
   const card=document.createElement('div');
@@ -566,8 +583,9 @@ async function streamGemini(payload,targetId,cardTitle,append,retryCount=0){
           const waitSec=15*(retryCount+1);
           contentEl.innerHTML=`<div style="color:var(--amber);font-size:13px;padding:8px 0">⏳ AI 服務短暫忙碌，等待 ${waitSec} 秒後重試（第 ${retryCount+1}/2 次）⋯</div>`;
           await sleep(waitSec*1000);
+          if(gen!=null&&gen!==analyzeGeneration) return;
           card.remove();
-          return streamGemini(payload,targetId,cardTitle,append,retryCount+1);
+          return streamGemini(payload,targetId,cardTitle,append,retryCount+1,gen);
         }
         if(limitNum&&/free_tier_requests/i.test(errMsg)){
           // Suggest an actually different model — if the visitor is already on Flash-Lite (the model
@@ -585,6 +603,7 @@ async function streamGemini(payload,targetId,cardTitle,append,retryCount=0){
     const decoder=new TextDecoder();
     let buffer='',fullText='';
     while(true){
+      if(gen!=null&&gen!==analyzeGeneration){ reader.cancel().catch(()=>{}); return; }
       const{done,value}=await reader.read();
       if(done) break;
       buffer+=decoder.decode(value,{stream:true});
@@ -607,6 +626,7 @@ async function streamGemini(payload,targetId,cardTitle,append,retryCount=0){
     }
     contentEl.classList.remove('streaming');
   }catch(e){
+    if(gen!=null&&gen!==analyzeGeneration) return;
     contentEl.classList.remove('streaming');
     contentEl.innerHTML=`<div class="error-box">⚠ AI 分析失敗：${e.message}</div>`;
   }
@@ -785,10 +805,11 @@ ${JSON.stringify(summaryData,null,2)}
 6. 請用繁體中文回答，格式使用 HTML（<h3><ul><li><p><strong>標籤），不要包含任何 markdown 或程式碼區塊標記`;
 }
 
-async function runSummaryAnalysis(symbol,companyName,techSummary,chipData,sentimentData,info){
+async function runSummaryAnalysis(symbol,companyName,techSummary,chipData,sentimentData,info,gen){
   const summaryData=buildSummaryData(info,techSummary,chipData,sentimentData);
   const prompt=buildSummaryPrompt(symbol,companyName,summaryData);
-  await streamGemini({prompt,model:selectedModel},'summaryContent','🧭 四面向綜合摘要',false);
+  await streamGemini({prompt,model:selectedModel},'summaryContent','🧭 四面向綜合摘要',false,0,gen);
+  if(gen!=null&&gen!==analyzeGeneration) return;
   const rawEl=document.createElement('div');
   rawEl.className='fund-card';
   rawEl.innerHTML=`<div class="fund-card-title">📎 原始數據（供核對 AI 摘要是否正確）</div><div class="fund-content" style="font-family:monospace;font-size:12px;white-space:pre-wrap">${escapeHtml(JSON.stringify(summaryData,null,2))}</div>`;
