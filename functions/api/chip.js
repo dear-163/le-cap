@@ -122,6 +122,7 @@ async function fetchInstitutionalFlow(stockCode) {
     const days = [];
     const cursor = new Date();
     let attempts = 0;
+    let foundAny = false;
     while (days.length < 5 && attempts < 12) {
       attempts++;
       cursor.setUTCDate(cursor.getUTCDate() - 1);
@@ -141,6 +142,7 @@ async function fetchInstitutionalFlow(stockCode) {
         return { error: `TWSE T86 欄位與預期不符，實際欄位：${body.fields.join('、')}` };
       }
       const row = body.data.find(r => r[cIdx]?.trim() === stockCode);
+      if (row) foundAny = true;
       const parseNum = v => { const n = parseFloat(String(v).replace(/,/g, '')); return isFinite(n) ? n : 0; };
       days.push({
         date: isoFromRocOrAd(body.date || adDate),
@@ -151,6 +153,12 @@ async function fetchInstitutionalFlow(stockCode) {
     }
     if (days.length === 0) {
       return { error: '近期交易日的 TWSE T86（三大法人買賣超）皆無法取得有效資料，請稍後再試' };
+    }
+    // If the stock code never showed up in any of the collected days' full market data, it isn't a
+    // TWSE-listed stock at all (e.g. a US symbol) — a series of real-looking zeros would misrepresent
+    // "not tracked here" as "confirmed zero institutional flow for 5 straight days."
+    if (!foundAny) {
+      return { error: `TWSE T86 近 ${days.length} 個交易日資料中都找不到股票代號 ${stockCode}（可能非上市股票，或非台股代號）` };
     }
     const source = 'TWSE T86';
     const sum = (key) => days.reduce((s, d) => s + d[key], 0);
