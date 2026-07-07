@@ -41,16 +41,18 @@ export async function onRequestGet(context) {
       '2383': 350, '5274': 4000, '2449': 120, '6515': 900
     };
 
+    const STOCK_NAMES = {
+      '2330': '台積電', '2454': '聯發科', '2317': '鴻海', '2308': '台達電', '2382': '廣達',
+      '5347': '世界先進', '2303': '聯電', '2603': '長榮', '3231': '緯創', '2376': '技嘉',
+      '2383': '台光電', '5274': '信驊', '2449': '京元電', '6515': '穎崴',
+      '2327': '國巨', '2345': '智邦', '3008': '大立光', '3711': '日月光投控', '2881': '富邦金',
+      '2882': '國泰金', '2301': '光寶科', '2357': '華碩', '3034': '聯詠', '2408': '南亞科'
+    };
+
     // IF symbol is specified: return specific stock flow or active ETF flow (Option A/C)
     if (symbol) {
       const cleanSymbol = symbol.replace(/\.(TW|TWO)$/i, '');
       const isEtf = /^\d{5}[A-Z]$/i.test(cleanSymbol);
-
-      const STOCK_NAMES = {
-        '2330': '台積電', '2454': '聯發科', '2317': '鴻海', '2308': '台達電', '2382': '廣達',
-        '5347': '世界先進', '2303': '聯電', '2603': '長榮', '3231': '緯創', '2376': '技嘉',
-        '2383': '台光電', '5274': '信驊', '2449': '京元電', '6515': '穎崴'
-      };
 
       if (isEtf) {
         const etfCode = cleanSymbol;
@@ -224,6 +226,7 @@ export async function onRequestGet(context) {
       if (changeShares !== 0) {
         changes.push({
           stock_code: code,
+          stock_name: STOCK_NAMES[code] || ('個股 ' + code),
           changeShares,
           changeAmount,
           action: changeAmount > 0 ? '買超' : '賣超'

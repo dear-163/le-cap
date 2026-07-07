@@ -1200,14 +1200,14 @@ async function loadActiveEtfRankings() {
     
     const buysHtml = buys.map(b => `
       <div style="display:flex; justify-content:space-between; align-items:center; padding: 4px 0; border-bottom: 1px dashed var(--border);">
-        <span style="font-weight:600; cursor:pointer; color:var(--text);" onclick="quickLoad('${escapeHtml(b.stock_code)}')">${escapeHtml(b.stock_code)}</span>
+        <span style="font-weight:600; cursor:pointer; color:var(--text);" onclick="quickLoad('${escapeHtml(b.stock_code)}')">${escapeHtml(b.stock_code)} <span style="font-size:11px;font-weight:normal;color:var(--text3);margin-left:4px;">${escapeHtml(b.stock_name || '')}</span></span>
         <span class="up" style="font-weight:700;">+${fmtAmt(b.changeAmount)}</span>
       </div>
     `).join('') || '<div style="color:var(--text3); text-align:center;">今日尚無買超記錄</div>';
 
     const sellsHtml = sells.map(s => `
       <div style="display:flex; justify-content:space-between; align-items:center; padding: 4px 0; border-bottom: 1px dashed var(--border);">
-        <span style="font-weight:600; cursor:pointer; color:var(--text);" onclick="quickLoad('${escapeHtml(s.stock_code)}')">${escapeHtml(s.stock_code)}</span>
+        <span style="font-weight:600; cursor:pointer; color:var(--text);" onclick="quickLoad('${escapeHtml(s.stock_code)}')">${escapeHtml(s.stock_code)} <span style="font-size:11px;font-weight:normal;color:var(--text3);margin-left:4px;">${escapeHtml(s.stock_name || '')}</span></span>
         <span class="down" style="font-weight:700;">${fmtAmt(s.changeAmount)}</span>
       </div>
     `).join('') || '<div style="color:var(--text3); text-align:center;">今日尚無賣超記錄</div>';
