@@ -84,7 +84,7 @@ input[type="password"]::placeholder{color:var(--text3);}
 .signal-val{font-size:19px;font-weight:700;}
 .signal-sub{font-size:11px;color:var(--text2);margin-top:3px;}
 .BUY{color:var(--red);}.SELL{color:var(--green);}.NEUTRAL{color:var(--amber);}
-.OVERBOUGHT{color:var(--red);}.OVERSOLD{color:var(--green);}
+.OVERBOUGHT{color:var(--green);}.OVERSOLD{color:var(--red);}
 
 .chart-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;}
 .chart-wrap{position:relative;width:100%;}
