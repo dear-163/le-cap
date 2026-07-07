@@ -24,9 +24,12 @@ export async function onRequestGet(context) {
     const todayDate = dateRows.results[0].date;
     const yesterdayDate = dateRows.results[1] ? dateRows.results[1].date : null;
 
-    // Fetch daily price mappings
+    // Fetch each code's most recent close only (not the full 245-day history) — a plain
+    // unordered SELECT here previously let whichever row D1 happened to return last for a
+    // given code win, which in practice was often a stale price over a year old (e.g. TSMC's
+    // 2025-06-11 close of 1065 instead of its actual latest close of ~2460).
     const priceRows = await env.ELAN_QUANT_DB
-      .prepare('SELECT code, close FROM stock_daily_price')
+      .prepare('SELECT code, close FROM stock_daily_price WHERE date = (SELECT MAX(date) FROM stock_daily_price)')
       .all();
     const priceMap = {};
     if (priceRows.results) {
@@ -34,12 +37,6 @@ export async function onRequestGet(context) {
         priceMap[p.code] = p.close;
       }
     }
-
-    const MOCK_PRICES = {
-      '2330': 1000, '2454': 1400, '2317': 200, '2308': 380, '2382': 320,
-      '5347': 80, '2303': 50, '2603': 200, '3231': 110, '2376': 270,
-      '2383': 350, '5274': 4000, '2449': 120, '6515': 900
-    };
 
     const STOCK_NAMES = {
       '2330': '台積電', '2454': '聯發科', '2317': '鴻海', '2308': '台達電', '2382': '廣達',
@@ -98,7 +95,7 @@ export async function onRequestGet(context) {
           if (changeShares > 0) action = '加碼';
           else if (changeShares < 0) action = '減碼';
 
-          const price = priceMap[code] || MOCK_PRICES[code] || 100;
+          const price = priceMap[code] || null;
 
           flow.push({
             stockCode: code,
@@ -108,8 +105,8 @@ export async function onRequestGet(context) {
             weight: t ? t.weight : 0,
             changeShares,
             changeWeight,
-            changeAmount: changeShares * price,
-            totalAmount: (t ? t.shares : 0) * price,
+            changeAmount: price != null ? changeShares * price : null,
+            totalAmount: price != null ? (t ? t.shares : 0) * price : null,
             date: todayDate,
             comparedTo: yesterdayDate
           });
@@ -131,7 +128,7 @@ export async function onRequestGet(context) {
         return json({ date: todayDate, symbol, flow: [], note: '非台股純數字代號，暫不支援主動式 ETF 追蹤。' });
       }
       const stockCode = match[1];
-      const price = priceMap[stockCode] || MOCK_PRICES[stockCode] || 100;
+      const price = priceMap[stockCode] || null;
 
       // Query database for this stock on these dates
       const querySql = yesterdayDate
@@ -184,7 +181,7 @@ export async function onRequestGet(context) {
           weight: t ? t.weight : 0,
           changeShares,
           changeWeight,
-          changeAmount: changeShares * price,
+          changeAmount: price != null ? changeShares * price : null,
           date: todayDate,
           comparedTo: yesterdayDate
         });
@@ -221,17 +218,18 @@ export async function onRequestGet(context) {
     for (const code in stockChanges) {
       const item = stockChanges[code];
       const changeShares = item.todayShares - item.yesterdayShares;
-      const price = priceMap[code] || MOCK_PRICES[code] || 100;
+      const price = priceMap[code] || null;
+      // No real price on record for this code (e.g. brand-new listing, or a TPEx holding —
+      // stock_daily_price is TWSE-only) — skip rather than rank it using a guessed price.
+      if (price == null || changeShares === 0) continue;
       const changeAmount = changeShares * price;
-      if (changeShares !== 0) {
-        changes.push({
-          stock_code: code,
-          stock_name: STOCK_NAMES[code] || ('個股 ' + code),
-          changeShares,
-          changeAmount,
-          action: changeAmount > 0 ? '買超' : '賣超'
-        });
-      }
+      changes.push({
+        stock_code: code,
+        stock_name: STOCK_NAMES[code] || ('個股 ' + code),
+        changeShares,
+        changeAmount,
+        action: changeAmount > 0 ? '買超' : '賣超'
+      });
     }
 
     // Sort to find top buys and sells by changeAmount

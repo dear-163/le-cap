@@ -16,7 +16,7 @@ function todayDates() {
   const y = taipei.getUTCFullYear();
   const m = String(taipei.getUTCMonth() + 1).padStart(2, '0');
   const d = String(taipei.getUTCDate()).padStart(2, '0');
-  return { ad: `${y}${m}${d}`, roc: `${y - 1911}${m}${d}` };
+  return { ad: `${y}${m}${d}`, roc: `${y - 1911}${m}${d}`, dash: `${y}-${m}-${d}` };
 }
 function daysAgoAd(days) {
   const d = new Date(Date.now() - days * 86400000);
@@ -198,7 +198,7 @@ async function updateHolderSnapshotIfNewWeek(db) {
   return { skipped: false, date: tdccDate, stockCount: perCode.size };
 }
 
-async function fetchAndStoreActiveEtfHoldings(db, todayAd) {
+async function fetchAndStoreActiveEtfHoldings(db, todayDash) {
   const etfs = [
     { code: '00981A', name: '主動統一台股增長主動式ETF', moneydjCode: '00981A.TW' },
     { code: '00980A', name: '野村臺灣智慧優選主動式ETF', moneydjCode: '00980A.TW' }
@@ -233,11 +233,11 @@ async function fetchAndStoreActiveEtfHoldings(db, todayAd) {
       const statements = holdings.map(h => {
         return db.prepare(
           'INSERT OR REPLACE INTO active_etf_holdings (etf_code, etf_name, stock_code, date, shares, weight) VALUES (?, ?, ?, ?, ?, ?)'
-        ).bind(etf.code, etf.name, h.stockCode, todayAd, h.shares, h.weight);
+        ).bind(etf.code, etf.name, h.stockCode, todayDash, h.shares, h.weight);
       });
 
       await db.batch(statements);
-      console.log(`[cron-etf] successfully stored ${holdings.length} holdings for ${etf.code} on ${todayAd}`);
+      console.log(`[cron-etf] successfully stored ${holdings.length} holdings for ${etf.code} on ${todayDash}`);
     } catch (e) {
       console.error(`[cron-etf] Error crawling ${etf.code}:`, e.message);
     }
@@ -251,7 +251,7 @@ export default {
       console.error('ELAN_QUANT_DB 未綁定，無法執行每日資料累積任務');
       return;
     }
-    const { ad: todayAd, roc: todayRoc } = todayDates();
+    const { ad: todayAd, roc: todayRoc, dash: todayDash } = todayDates();
     const dayData = { date: todayAd, taiex_close: null, advancers: null, decliners: null, new_highs: null, new_lows: null, margin_balance_total: null, inst_net_buy_count: null, inst_net_sell_count: null };
 
     try {
@@ -308,7 +308,10 @@ export default {
     } catch (e) { console.error('[cron] 更新大戶持股週快照失敗：', e.message); }
 
     try {
-      await fetchAndStoreActiveEtfHoldings(db, todayAd);
+      // active_etf_holdings.date 統一用 YYYY-MM-DD（跟 scripts/sync_active_etfs.js 手動同步腳本
+      // 一致）——這裡故意不用 todayAd（YYYYMMDD，其他表用的格式），避免同一張表混入兩種日期
+      // 格式，導致 functions/api/active-etf-flow.js 「取最新兩個日期」的字串排序邏輯失準。
+      await fetchAndStoreActiveEtfHoldings(db, todayDash);
       console.log('[cron] 主動式 ETF 持股爬蟲執行完成');
     } catch (e) { console.error('[cron] 主動式 ETF 持股爬蟲失敗：', e.message); }
   },

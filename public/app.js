@@ -208,8 +208,9 @@ function calcKD(data,n=9){
 function last(a){return a.filter(v=>v!=null).slice(-1)[0];}
 function fmt(v,d=2){return v!=null?Number(v).toFixed(d):'N/A';}
 function sigBadge(s){
-  // 台股慣例：買入(好事)=紅，賣出(壞事)=綠；超買/超賣本來就已經對齊「漲=紅跌=綠」不用動
-  const m={BUY:['badge-red','買入'],SELL:['badge-green','賣出'],OVERBOUGHT:['badge-red','超買'],OVERSOLD:['badge-green','超賣'],NEUTRAL:['badge-amber','中性']};
+  // 台股慣例：買入(好事)=紅，賣出(壞事)=綠；超買是偏空/風險訊號=綠，超賣是偏多/買點訊號=紅——
+  // 跟 signal-val 用的 .OVERBOUGHT/.OVERSOLD CSS、以及 KD/BB 訊號的 up/down class 對齊一致。
+  const m={BUY:['badge-red','買入'],SELL:['badge-green','賣出'],OVERBOUGHT:['badge-green','超買'],OVERSOLD:['badge-red','超賣'],NEUTRAL:['badge-amber','中性']};
   const[cls,txt]=m[s]||['badge-amber','中性'];
   return`<span class="badge ${cls}">${txt}</span>`;
 }
@@ -758,6 +759,7 @@ function renderChip(data, etfData, lc){
   const num=v=>Number(v).toLocaleString();
 
   const fmtAmt = v => {
+    if (v==null) return '金額暫無資料';
     const abs = Math.abs(v);
     if (abs >= 1e8) return (v / 1e8).toFixed(2) + ' 億元';
     if (abs >= 1e4) return (v / 1e4).toFixed(0) + ' 萬元';
