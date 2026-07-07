@@ -98,9 +98,10 @@ async function analyze(){
     // Chip and sentiment are independent data sources — fetch them concurrently instead of
     // sequentially so the wait before rendering (and before the AI summary can start) is roughly
     // halved, especially since chip.js does non-trivial work server-side (TDCC CSV parse + T86 calls).
-    const isTW=isTaiwanSymbol(sym);
+    const resolvedSym=info.symbol||sym;
+    const isTW=isTaiwanSymbol(resolvedSym);
     await Promise.all([
-      (isTW?fetchChip(sym):fetchChipUS(sym)).then(d=>{ if(myGen!==analyzeGeneration) return; chipData=d; (isTW?renderChip:renderChipUS)(d); }).catch(e=>{
+      (isTW?fetchChip(resolvedSym):fetchChipUS(resolvedSym)).then(d=>{ if(myGen!==analyzeGeneration) return; chipData=d; (isTW?renderChip:renderChipUS)(d); }).catch(e=>{
         if(myGen!==analyzeGeneration) return;
         document.getElementById('chipContent').innerHTML=`<div class="error-box">⚠ 籌碼面資料取得失敗：${escapeHtml(e.message)}</div>`;
       }),
@@ -692,11 +693,11 @@ function renderChip(data){
       <div class="ind-row"><span class="ind-name">週變化（千張大戶）</span><span class="ind-val">${fmtField(h.weeklyChange,v=>(v>=0?'+':'')+v.toFixed(2)+'%')}</span></div>
       <div class="src-note" style="margin-top:6px">集保股權分散表每週五更新一次，其餘平日資料不變。</div>`}
     </div>
-    <div class="ind-card"><div class="ind-title">🏦 三大法人買賣超（近5日）</div>
+    <div class="ind-card"><div class="ind-title">🏦 三大法人買賣超（${inst.period||'近5日'}）</div>
       ${inst.error?`<div class="error-box">⚠ 暫無資料：${escapeHtml(inst.error)}</div>`:`
-      <div class="ind-row"><span class="ind-name">外資累計買賣超</span><span class="ind-val ${inst.foreignNet5d?.value>0?'up':inst.foreignNet5d?.value<0?'down':''}">${fmtField(inst.foreignNet5d,num)}</span></div>
-      <div class="ind-row"><span class="ind-name">投信累計買賣超</span><span class="ind-val ${inst.trustNet5d?.value>0?'up':inst.trustNet5d?.value<0?'down':''}">${fmtField(inst.trustNet5d,num)}</span></div>
-      <div class="ind-row"><span class="ind-name">自營商累計買賣超</span><span class="ind-val">${fmtField(inst.dealerNet5d,num)}</span></div>
+      <div class="ind-row"><span class="ind-name">外資買賣超</span><span class="ind-val ${inst.foreignNet5d?.value>0?'up':inst.foreignNet5d?.value<0?'down':''}">${fmtField(inst.foreignNet5d,num)}</span></div>
+      <div class="ind-row"><span class="ind-name">投信買賣超</span><span class="ind-val ${inst.trustNet5d?.value>0?'up':inst.trustNet5d?.value<0?'down':''}">${fmtField(inst.trustNet5d,num)}</span></div>
+      <div class="ind-row"><span class="ind-name">自營商買賣超</span><span class="ind-val">${fmtField(inst.dealerNet5d,num)}</span></div>
       <div class="ind-row"><span class="ind-name">外資連續買/賣超天數</span><span class="ind-val">${fmtField(inst.foreignConsecutiveDays,v=>Math.abs(v)+'天'+(v>0?'買超':v<0?'賣超':''))}</span></div>`}
     </div>
   </div>

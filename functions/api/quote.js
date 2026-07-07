@@ -24,12 +24,42 @@ export async function onRequestGet(context) {
   const cached = await cache.match(cacheKey);
   if (cached) return cached;
 
-  const candles = await fetchYahooCandles(symbol, period);
+  let resolvedSymbol = symbol;
+  let candles = await fetchYahooCandles(symbol, period);
+  if (!candles || candles.length < 5) {
+    if (/^\d{4,6}$/.test(symbol)) {
+      const twSymbol = `${symbol}.TW`;
+      candles = await fetchYahooCandles(twSymbol, period);
+      if (candles && candles.length >= 5) {
+        resolvedSymbol = twSymbol;
+      } else {
+        const twoSymbol = `${symbol}.TWO`;
+        candles = await fetchYahooCandles(twoSymbol, period);
+        if (candles && candles.length >= 5) {
+          resolvedSymbol = twoSymbol;
+        }
+      }
+    } else if (/\.TW$/i.test(symbol)) {
+      const alternativeSymbol = symbol.replace(/\.TW$/i, '.TWO');
+      candles = await fetchYahooCandles(alternativeSymbol, period);
+      if (candles && candles.length >= 5) {
+        resolvedSymbol = alternativeSymbol;
+      }
+    } else if (/\.TWO$/i.test(symbol)) {
+      const alternativeSymbol = symbol.replace(/\.TWO$/i, '.TW');
+      candles = await fetchYahooCandles(alternativeSymbol, period);
+      if (candles && candles.length >= 5) {
+        resolvedSymbol = alternativeSymbol;
+      }
+    }
+  }
+
   if (!candles || candles.length < 5) {
     return json({ error: `無法取得 ${symbol} 的股價數據，請確認代號是否正確（台股請加 .TW，例如 2330.TW）` }, 502);
   }
 
-  const meta = await fetchQuoteInfo(symbol, candles._meta || {}, env, userFmpKey);
+  const meta = await fetchQuoteInfo(resolvedSymbol, candles._meta || {}, env, userFmpKey);
+  meta.symbol = resolvedSymbol;
   const responseBody = {
     candles: candles.map(c => ({ date: c.date.toISOString(), open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume })),
     meta,

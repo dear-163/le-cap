@@ -170,6 +170,7 @@ async function fetchInstitutionalFlow(stockCode) {
       else foreignStreak += sign;
     }
     return {
+      period: '近5日',
       days: { value: days, source },
       foreignNet5d: { value: sum('foreignNet'), source, date: days[0]?.date },
       trustNet5d: { value: sum('trustNet'), source, date: days[0]?.date },
@@ -181,6 +182,61 @@ async function fetchInstitutionalFlow(stockCode) {
   }
 }
 
+// 上櫃(TPEx)股票的融資融券/三大法人資料源跟上市(TWSE)完全不同——這是分開的交易所系統。
+// tpex_3insti_daily_trading 不支援指定日期查詢(只給最新一天)，跟 TWSE 的 T86 不一樣，
+// 所以上櫃股票只能顯示「當日」三大法人買賣超，沒辦法像上市股票一樣算「近5日」累計。
+async function fetchMarginTpex(stockCode) {
+  try {
+    const res = await fetch('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_margin_balance', { headers: BROWSER_HEADERS });
+    if (!res.ok) return { error: `TPEx tpex_mainboard_margin_balance 請求失敗：HTTP ${res.status}` };
+    const arr = await res.json();
+    if (!Array.isArray(arr)) return { error: 'TPEx tpex_mainboard_margin_balance 回應格式不是陣列，可能是端點已變更' };
+    const row = arr.find(r => (r['SecuritiesCompanyCode'] || '').trim() === stockCode);
+    if (!row) return { error: `TPEx 今日資料中找不到股票代號 ${stockCode}（可能非上櫃股票，或今日無交易）` };
+    const parseNum = v => { const n = parseFloat(String(v).replace(/,/g, '')); return isFinite(n) ? n : null; };
+    const marginBalance = parseNum(row['MarginPurchaseBalance']);
+    const utilizationPct = parseNum(row['MarginPurchaseUtilizationRate']); // TPEx already gives this as a percentage number (e.g. "3.99"), not a raw ratio
+    const shortBalance = parseNum(row['ShortSaleBalance']);
+    const isoDate = isoFromRocOrAd(row['Date']);
+    const source = 'TPEx tpex_mainboard_margin_balance';
+    return {
+      marginBalance: { value: marginBalance, source, date: isoDate },
+      marginUsageRate: { value: utilizationPct != null ? utilizationPct / 100 : null, source, date: isoDate },
+      shortBalance: { value: shortBalance, source, date: isoDate },
+      shortToMarginRatio: { value: (shortBalance != null && marginBalance) ? shortBalance / marginBalance : null, source, date: isoDate },
+    };
+  } catch (e) {
+    return { error: `TPEx tpex_mainboard_margin_balance 請求發生例外：${e.message}` };
+  }
+}
+
+async function fetchInstitutionalFlowTpex(stockCode) {
+  try {
+    const res = await fetch('https://www.tpex.org.tw/openapi/v1/tpex_3insti_daily_trading', { headers: BROWSER_HEADERS });
+    if (!res.ok) return { error: `TPEx tpex_3insti_daily_trading 請求失敗：HTTP ${res.status}` };
+    const arr = await res.json();
+    if (!Array.isArray(arr)) return { error: 'TPEx tpex_3insti_daily_trading 回應格式不是陣列，可能是端點已變更' };
+    const row = arr.find(r => (r['SecuritiesCompanyCode'] || '').trim() === stockCode);
+    if (!row) return { error: `TPEx 今日三大法人買賣超資料中找不到股票代號 ${stockCode}（可能非上櫃股票，或今日無交易）` };
+    const parseNum = v => { const n = parseFloat(String(v ?? '').replace(/,/g, '')); return isFinite(n) ? n : null; };
+    const isoDate = isoFromRocOrAd(row['Date']);
+    const source = 'TPEx tpex_3insti_daily_trading';
+    // TPEx's own field naming is inconsistent between exports — verified by inspecting a real
+    // response: the "Difference" key has a stray space ("...Include MainlandAreaInvestors...")
+    // that the "TotalBuy"/"TotalSell" keys for the same field don't have. Try both forms.
+    const foreignDiff = row['ForeignInvestorsIncludeMainlandAreaInvestors-Difference'] ?? row['ForeignInvestorsInclude MainlandAreaInvestors-Difference'];
+    return {
+      period: '當日（上櫃僅提供單日資料，非近5日累計）',
+      foreignNet5d: { value: parseNum(foreignDiff), source, date: isoDate },
+      trustNet5d: { value: parseNum(row['SecuritiesInvestmentTrustCompanies-Difference']), source, date: isoDate },
+      dealerNet5d: { value: parseNum(row['Dealers-Difference']), source, date: isoDate },
+      foreignConsecutiveDays: null, // needs multi-day history, not available from this single-day endpoint
+    };
+  } catch (e) {
+    return { error: `TPEx tpex_3insti_daily_trading 請求發生例外：${e.message}` };
+  }
+}
+
 export async function onRequestGet(context) {
   const { request, env } = context;
   const url = new URL(request.url);
@@ -189,20 +245,43 @@ export async function onRequestGet(context) {
     return json({ error: '股票代號格式不正確' }, 400);
   }
   const stockCode = stockCodeFromSymbol(symbol);
+  let isTpex = /\.TWO$/i.test(symbol);
 
   // MI_MARGN/TDCC/T86 all update at most once per trading day, but this handler re-fetches and
   // re-parses a ~68k-line TDCC CSV plus up to 12 sequential T86 requests on every call — cache the
   // response for a few minutes so repeat lookups (or abuse) don't multiply that cost per visitor.
   const cache = caches.default;
-  const cacheKey = new Request(`https://elan-quant-cache.internal/chip/${stockCode}`, { method: 'GET' });
+  const cacheKey = new Request(`https://elan-quant-cache.internal/chip/${isTpex ? 'tpex' : 'twse'}/${stockCode}`, { method: 'GET' });
   const cached = await cache.match(cacheKey);
   if (cached) return cached;
 
-  const [margin, holders, institutional] = await Promise.all([
-    fetchMargin(stockCode),
-    fetchHolderDistribution(stockCode, env),
-    fetchInstitutionalFlow(stockCode),
-  ]);
+  let margin, holders, institutional;
+  if (isTpex) {
+    [margin, holders, institutional] = await Promise.all([
+      fetchMarginTpex(stockCode),
+      fetchHolderDistribution(stockCode, env),
+      fetchInstitutionalFlowTpex(stockCode),
+    ]);
+  } else {
+    [margin, holders, institutional] = await Promise.all([
+      fetchMargin(stockCode),
+      fetchHolderDistribution(stockCode, env),
+      fetchInstitutionalFlow(stockCode),
+    ]);
+    const isNotFoundOnTwse = (margin.error && margin.error.includes('找不到股票代號')) || 
+                             (institutional.error && institutional.error.includes('找不到股票代號'));
+    if (isNotFoundOnTwse) {
+      const [marginTpex, institutionalTpex] = await Promise.all([
+        fetchMarginTpex(stockCode),
+        fetchInstitutionalFlowTpex(stockCode),
+      ]);
+      if (!marginTpex.error || !institutionalTpex.error) {
+        margin = marginTpex;
+        institutional = institutionalTpex;
+        isTpex = true;
+      }
+    }
+  }
 
   const response = json({ margin, holders, institutional }, 200, { 'Cache-Control': 'public, max-age=300' });
   context.waitUntil(cache.put(cacheKey, response.clone()));
