@@ -152,3 +152,34 @@ input[type="password"]::placeholder{color:var(--text3);}
 
 .streaming::after{content:'▋';animation:blink .8s step-end infinite;color:var(--blue);}
 @keyframes blink{50%{opacity:0;}}
+
+/* Prevent any white background default styling in browser for AI content */
+.fund-content pre, .fund-content code {
+  background: var(--bg3) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-family: monospace;
+}
+.fund-content pre {
+  display: block;
+  overflow-x: auto;
+  margin: 10px 0;
+  padding: 12px;
+}
+.fund-content blockquote {
+  background: var(--bg3) !important;
+  color: var(--text2) !important;
+  border-left: 4px solid var(--blue) !important;
+  padding: 8px 12px;
+  margin: 10px 0;
+  border-radius: 0 6px 6px 0;
+}
+.fund-content table {
+  background: var(--bg2) !important;
+  border: 1px solid var(--border2) !important;
+}
+.fund-content tr:nth-child(even) {
+  background: rgba(255,255,255,0.02) !important;
+}
