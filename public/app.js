@@ -752,7 +752,7 @@ function renderChip(data){
 // 台灣的融資融券／集保股權分散／三大法人是 TWSE/TDCC 特有的規範，美股沒有每日對應的東西——最接近的
 //官方揭露是 SEC 13F（機構持股，季報）與 Form 4（內部人買賣，近即時），兩者都透過 FMP 取得。
 function isTaiwanSymbol(symbol){
-  return /^\d{4,6}(\.(TW|TWO))?$/i.test(symbol) || /\.(TW|TWO)$/i.test(symbol);
+  return /^\d{4,6}[A-Z]?(\.(TW|TWO))?$/i.test(symbol) || /\.(TW|TWO)$/i.test(symbol);
 }
 
 async function fetchChipUS(symbol){

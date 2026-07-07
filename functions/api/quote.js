@@ -34,7 +34,7 @@ export async function onRequestGet(context) {
   let resolvedSymbol = symbol;
   let candles = await fetchYahooCandles(symbol, period, interval);
   if (!candles || candles.length < 5) {
-    if (/^\d{4,6}$/.test(symbol)) {
+    if (/^\d{4,6}[A-Z]?$/i.test(symbol)) {
       const twSymbol = `${symbol}.TW`;
       candles = await fetchYahooCandles(twSymbol, period, interval);
       if (candles && candles.length >= 5) {
