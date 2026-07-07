@@ -4,6 +4,10 @@
 const BROWSER_HEADERS = { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0 (compatible; ElanQuantCron/1.0)' };
 const STOCK_HISTORY_MIN_DAYS = 200; // 個股要先累積這麼多天資料，「創新高/新低」判斷才有意義，避免剛開始追蹤就全部被判定為新高
 const ROLLING_WINDOW_CALENDAR_DAYS = 380; // 52週(252個交易日)大約對應的日曆天數，含假日緩衝
+// TWSE 的端點被實測證實會「靜默」回傳錯誤資料（stat 顯示 OK、格式正常，但數字是錯的——
+// 例如假日期間查詢卻拿到一筆看似正常的假資料）。這不是拋錯，retry 抓不到，只能靠合理性檢查擋。
+// 加權指數單日漲跌超過這個比例在真實交易中幾乎不可能發生，用來擋掉這類異常值。
+const MAX_TAIEX_DAILY_CHANGE_RATIO = 0.15;
 
 function todayDates() {
   // Cron 在 UTC 11:00（台北 19:00）觸發，用 UTC+8 換算「今天」的日期。
@@ -112,6 +116,15 @@ async function batchRun(db, statements, chunkSize = 50) {
   }
 }
 
+// 回傳 null 代表沒有前一筆可比對（例如第一天），此時無法做合理性檢查，直接放行。
+async function fetchPreviousTaiexClose(db, beforeDate) {
+  const row = await db
+    .prepare('SELECT taiex_close FROM daily_market_data WHERE date < ? AND taiex_close IS NOT NULL ORDER BY date DESC LIMIT 1')
+    .bind(beforeDate)
+    .first();
+  return row ? row.taiex_close : null;
+}
+
 // 更新 stock_daily_price 並統計今日創52週新高/新低家數。
 // 個股要先累積 STOCK_HISTORY_MIN_DAYS 天資料才會被納入新高/新低判斷，避免剛開始追蹤的股票都被誤判成「新高」。
 async function updateStockPricesAndCountNewHighLow(db, todayAd, stockRows) {
@@ -196,7 +209,13 @@ export default {
     const dayData = { date: todayAd, taiex_close: null, advancers: null, decliners: null, new_highs: null, new_lows: null, margin_balance_total: null, inst_net_buy_count: null, inst_net_sell_count: null };
 
     try {
-      dayData.taiex_close = await fetchTaiexClose(todayRoc);
+      const raw = await fetchTaiexClose(todayRoc);
+      const prev = await fetchPreviousTaiexClose(db, todayAd);
+      if (prev != null && Math.abs(raw - prev) / prev > MAX_TAIEX_DAILY_CHANGE_RATIO) {
+        console.error(`[cron] 加權指數收盤價 ${raw} 與前一筆有效值 ${prev} 差異達 ${((Math.abs(raw - prev) / prev) * 100).toFixed(1)}%，超過合理範圍，懷疑來源資料異常（TWSE 端點已知會偶發回傳看似正常但錯誤的資料），本次不採用，當日欄位保留 NULL`);
+      } else {
+        dayData.taiex_close = raw;
+      }
     } catch (e) { console.error('[cron] 取得加權指數失敗：', e.message); }
 
     try {
