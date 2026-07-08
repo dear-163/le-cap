@@ -967,21 +967,23 @@ function renderChipUS(data){
 function sentimentGaugeSVG(score,level){
   const clamped=Math.max(0,Math.min(100,score));
   const angle=Math.PI*(clamped/100);
-  const cx=150,cy=140,r=110;
+  const cx=150,cy=140,r=100;
   const needleAngle=Math.PI-angle;
   const nx=(cx+r*0.85*Math.cos(needleAngle)).toFixed(1);
   const ny=(cy-r*0.85*Math.sin(needleAngle)).toFixed(1);
   return `<svg viewBox="0 0 300 170" width="100%" style="max-width:320px;display:block;margin:0 auto">
     <defs><linearGradient id="gaugeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#ff5252"/><stop offset="25%" stop-color="#ffab00"/>
-      <stop offset="50%" stop-color="#9090a8"/><stop offset="75%" stop-color="#8bc34a"/>
-      <stop offset="100%" stop-color="#00e676"/>
+      <stop offset="0%" stop-color="#00e676"/><stop offset="25%" stop-color="#8bc34a"/>
+      <stop offset="50%" stop-color="#9090a8"/><stop offset="75%" stop-color="#ffab00"/>
+      <stop offset="100%" stop-color="#ff5252"/>
     </linearGradient></defs>
     <path d="M ${cx-r} ${cy} A ${r} ${r} 0 0 1 ${cx+r} ${cy}" stroke="url(#gaugeGrad)" stroke-width="18" fill="none" stroke-linecap="round"/>
     <line x1="${cx}" y1="${cy}" x2="${nx}" y2="${ny}" stroke="var(--text)" stroke-width="3"/>
     <circle cx="${cx}" cy="${cy}" r="6" fill="var(--text)"/>
-    <text x="${cx}" y="${cy+34}" text-anchor="middle" font-size="30" font-weight="700" fill="var(--text)">${score.toFixed(0)}</text>
-    <text x="${cx}" y="${cy+54}" text-anchor="middle" font-size="13" fill="var(--text2)">${level||''}</text>
+    <text x="${cx}" y="${cy+25}" text-anchor="middle" font-size="30" font-weight="700" fill="var(--text)">${score.toFixed(0)}</text>
+    <text x="${cx}" y="${cy+45}" text-anchor="middle" font-size="13" fill="var(--text2)">${level||''}</text>
+    <text x="${cx-r-10}" y="${cy+5}" text-anchor="end" font-size="9" fill="var(--text3)">極度恐懼</text>
+    <text x="${cx+r+10}" y="${cy+5}" text-anchor="start" font-size="9" fill="var(--text3)">極度貪婪</text>
   </svg>`;
 }
 
