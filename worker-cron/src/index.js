@@ -449,6 +449,23 @@ async function fetchCtbcHoldings(fid) {
   }));
 }
 
+// 第一金投信（fsitc.com.tw）：ASP.NET WebMethod，POST body 不帶 pStrDate（空字串）就是回傳
+// 最新一天的資料，不用另外查日期格式。回應是「JSON 字串包一層」（.d 欄位本身還要再 JSON.parse
+// 一次）。group 欄位混雜了股票(1)／現金(4)／類別佔比摘要(5)，只取 group==="1" 的才是真的持股。
+async function fetchFirstHoldings(fundId) {
+  const res = await fetch('https://www.fsitc.com.tw/WebAPI.aspx/Get_hd', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8', 'User-Agent': 'Mozilla/5.0' },
+    body: JSON.stringify({ pStrFundID: fundId, pStrDate: '' }),
+  });
+  if (!res.ok) throw new Error(`第一金投信 HTTP ${res.status}`);
+  const outer = await res.json();
+  const data = JSON.parse(outer.d);
+  return data
+    .filter(r => r.group === '1')
+    .map(r => ({ stockCode: r.A, stockName: r.B, weight: parseFloat(r.C), shares: parseFloat(String(r.D).replace(/,/g, '')) }));
+}
+
 async function fetchAndStoreActiveEtfHoldings(db, todayDash) {
   const etfs = [
     { code: '00981A', name: '統一台股增長主動式ETF', source: 'ezmoney', fundCode: '49YTW' },
@@ -470,12 +487,13 @@ async function fetchAndStoreActiveEtfHoldings(db, todayDash) {
     { code: '00406A', name: '中信台灣收益主動式ETF', source: 'ctbc', fundCode: 'E0038' },
     { code: '00983A', name: '中信ARK創新主動式ETF', source: 'ctbc', fundCode: 'E0034' },
     { code: '00995A', name: '中信台灣卓越主動式ETF', source: 'ctbc', fundCode: 'E0036' },
+    { code: '00994A', name: '第一金台股優主動式ETF', source: 'first', fundCode: '182' },
   ];
 
   const fetchers = {
     ezmoney: fetchEzmoneyHoldings, nomura: fetchNomuraHoldings, kgifund: fetchKgifundHoldings,
     fubon: fetchFubonHoldings, allianz: fetchAllianzHoldings, taishin: fetchTaishinHoldings,
-    ab: fetchAllianceBernsteinHoldings, ctbc: fetchCtbcHoldings,
+    ab: fetchAllianceBernsteinHoldings, ctbc: fetchCtbcHoldings, first: fetchFirstHoldings,
   };
 
   for (const etf of etfs) {
