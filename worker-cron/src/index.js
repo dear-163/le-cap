@@ -566,6 +566,25 @@ async function fetchYuantaHoldings(ticker) {
   })).filter(h => h.stockCode && isFinite(h.weight));
 }
 
+// 摩根投信（am.jpmorgan.com）：乾淨的公開 JSON API，不用 cookie/登入。之前以為要解析 XLSX
+// 檔案才卡住很久，實際上頁面上的「投資組合」表格是這支 API 直接回傳的，完整持股就在
+// fundData.holdings.pcfEquityHoldings.data 裡（不是分頁載入，一次回傳全部，頁面上的分頁
+// 只是前端每頁顯示10筆的視覺呈現）。cusip 用的是 TW ISIN 格式（如 TW00000401A1），不是
+// 台股代號。00989A整檔是美股持股，跟台新、群益的美股持股處理方式一致。
+async function fetchJpmorganHoldings(cusip) {
+  const res = await fetch(`https://am.jpmorgan.com/FundsMarketingHandler/product-data?cusip=${cusip}&country=tw&role=twetf&language=zh&userLoggedIn=false`, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+  });
+  if (!res.ok) throw new Error(`摩根投信 API HTTP ${res.status}`);
+  const apiRes = await res.json();
+  const rows = apiRes?.fundData?.holdings?.pcfEquityHoldings?.data;
+  if (!Array.isArray(rows) || rows.length === 0) throw new Error('摩根投信 API 回應格式跟預期不符（找不到 pcfEquityHoldings.data）');
+  return rows.map(r => ({
+    stockCode: r.securityTicker, stockName: (r.securityDescription || '').trim(),
+    shares: r.shares != null ? Math.round(r.shares) : null, weight: r.marketValuePercent,
+  })).filter(h => h.stockCode && isFinite(h.weight));
+}
+
 async function fetchAndStoreActiveEtfHoldings(db, todayDash) {
   const etfs = [
     { code: '00981A', name: '統一台股增長主動式ETF', source: 'ezmoney', fundCode: '49YTW' },
@@ -594,6 +613,8 @@ async function fetchAndStoreActiveEtfHoldings(db, todayDash) {
     { code: '00997A', name: '群益美國增長主動式ETF', source: 'capital', fundCode: '502' },
     { code: '00996A', name: '兆豐台灣豐收主動式ETF', source: 'mega', fundCode: '23' },
     { code: '00990A', name: '元大全球AI新經濟主動式ETF', source: 'yuanta', fundCode: '00990A' },
+    { code: '00401A', name: '摩根台灣鑫收益主動式ETF', source: 'jpmorgan', fundCode: 'TW00000401A1' },
+    { code: '00989A', name: '摩根大美國領先科技主動式ETF', source: 'jpmorgan', fundCode: 'TW00000989A5' },
   ];
 
   const fetchers = {
@@ -601,7 +622,7 @@ async function fetchAndStoreActiveEtfHoldings(db, todayDash) {
     fubon: fetchFubonHoldings, allianz: fetchAllianzHoldings, taishin: fetchTaishinHoldings,
     ab: fetchAllianceBernsteinHoldings, ctbc: fetchCtbcHoldings, first: fetchFirstHoldings,
     cathay: fetchCathayHoldings, capital: fetchCapitalHoldings, mega: fetchMegaHoldings,
-    yuanta: fetchYuantaHoldings,
+    yuanta: fetchYuantaHoldings, jpmorgan: fetchJpmorganHoldings,
   };
 
   for (const etf of etfs) {

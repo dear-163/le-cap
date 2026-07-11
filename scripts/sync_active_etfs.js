@@ -44,6 +44,8 @@ const etfs = [
   { code: '00997A', name: '群益美國增長主動式ETF', source: 'capital', fundCode: '502' },
   { code: '00996A', name: '兆豐台灣豐收主動式ETF', source: 'mega', fundCode: '23' },
   { code: '00990A', name: '元大全球AI新經濟主動式ETF', source: 'yuanta', fundCode: '00990A' },
+  { code: '00401A', name: '摩根台灣鑫收益主動式ETF', source: 'jpmorgan', fundCode: 'TW00000401A1' },
+  { code: '00989A', name: '摩根大美國領先科技主動式ETF', source: 'jpmorgan', fundCode: 'TW00000989A5' },
 ];
 
 // ezmoney.com.tw（統一投信官網）對第一次沒帶反爬蟲 cookie 的請求，永遠回傳 302 重新導向回同一個
@@ -374,6 +376,22 @@ async function fetchYuantaHoldings(ticker) {
   })).filter(h => h.stockCode && isFinite(h.weight));
 }
 
+// 摩根投信（am.jpmorgan.com）：乾淨的公開 JSON API，不用 cookie/登入。完整持股在
+// fundData.holdings.pcfEquityHoldings.data（一次回傳全部，不是分頁載入）。cusip 用 TW ISIN
+// 格式（如 TW00000401A1），不是台股代號。00989A整檔是美股持股，處理方式跟其他issuer一致。
+async function fetchJpmorganHoldings(cusip) {
+  const res = await fetch(`https://am.jpmorgan.com/FundsMarketingHandler/product-data?cusip=${cusip}&country=tw&role=twetf&language=zh&userLoggedIn=false`, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+  });
+  if (!res.ok) throw new Error(`摩根投信 API HTTP ${res.status}`);
+  const apiRes = await res.json();
+  const rows = apiRes?.fundData?.holdings?.pcfEquityHoldings?.data;
+  if (!Array.isArray(rows) || rows.length === 0) throw new Error('摩根投信 API 回應格式跟預期不符（找不到 pcfEquityHoldings.data）');
+  return rows.map(r => ({
+    stockCode: r.securityTicker, shares: r.shares != null ? Math.round(r.shares) : null, weight: r.marketValuePercent,
+  })).filter(h => h.stockCode && isFinite(h.weight));
+}
+
 const FETCHERS = {
   ezmoney: fetchEzmoneyHoldings,
   nomura: fetchNomuraHoldings,
@@ -388,6 +406,7 @@ const FETCHERS = {
   capital: fetchCapitalHoldings,
   mega: fetchMegaHoldings,
   yuanta: fetchYuantaHoldings,
+  jpmorgan: fetchJpmorganHoldings,
 };
 
 async function main() {
