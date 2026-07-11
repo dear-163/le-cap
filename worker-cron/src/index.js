@@ -549,6 +549,23 @@ async function fetchMegaHoldings(id) {
   return rows.map(m => ({ stockCode: m[1], stockName: m[2].trim(), shares: parseFloat(m[3].replace(/,/g, '')), weight: parseFloat(m[4]) }));
 }
 
+// 元大投信（etfapi.yuantaetfs.com）：乾淨的公開 JSON API，不用 cookie/登入/任何 header。
+// 網址結構是「閘道 + FuncId 參數」（bridge?...&FuncId=PCF/Daily&...&ticker=00990A），跟一般
+// REST API 路徑完全不同，之前用猜路徑的方式一直 404 就是因為這樣——要從頁面實際打的網路
+// 請求才找得到。持股在 FundWeights.StockWeights，00990A 是全球型基金，code 可能帶交易所
+// 字尾（如"AMD US"、"285A JP"），純數字的才是台股，跟台新/群益美股持股的處理方式一致。
+async function fetchYuantaHoldings(ticker) {
+  const res = await fetch(`https://etfapi.yuantaetfs.com/ectranslation/api/bridge?APIType=ETFAPI&CompanyName=YUANTAFUNDS&PageName=/&DeviceId=elan-quant-cron&FuncId=PCF/Daily&AppName=ETF&Device=3&Platform=ETF&ticker=${ticker}`);
+  if (!res.ok) throw new Error(`元大投信 API HTTP ${res.status}`);
+  const apiRes = await res.json();
+  const rows = apiRes?.FundWeights?.StockWeights;
+  if (!Array.isArray(rows) || rows.length === 0) throw new Error('元大投信 API 回應格式跟預期不符（找不到 FundWeights.StockWeights）');
+  return rows.map(r => ({
+    stockCode: r.code, stockName: (r.name || '').trim(),
+    shares: r.qty != null ? Math.round(r.qty) : null, weight: r.weights,
+  })).filter(h => h.stockCode && isFinite(h.weight));
+}
+
 async function fetchAndStoreActiveEtfHoldings(db, todayDash) {
   const etfs = [
     { code: '00981A', name: '統一台股增長主動式ETF', source: 'ezmoney', fundCode: '49YTW' },
@@ -576,6 +593,7 @@ async function fetchAndStoreActiveEtfHoldings(db, todayDash) {
     { code: '00992A', name: '群益台灣科技創新主動式ETF', source: 'capital', fundCode: '500' },
     { code: '00997A', name: '群益美國增長主動式ETF', source: 'capital', fundCode: '502' },
     { code: '00996A', name: '兆豐台灣豐收主動式ETF', source: 'mega', fundCode: '23' },
+    { code: '00990A', name: '元大全球AI新經濟主動式ETF', source: 'yuanta', fundCode: '00990A' },
   ];
 
   const fetchers = {
@@ -583,6 +601,7 @@ async function fetchAndStoreActiveEtfHoldings(db, todayDash) {
     fubon: fetchFubonHoldings, allianz: fetchAllianzHoldings, taishin: fetchTaishinHoldings,
     ab: fetchAllianceBernsteinHoldings, ctbc: fetchCtbcHoldings, first: fetchFirstHoldings,
     cathay: fetchCathayHoldings, capital: fetchCapitalHoldings, mega: fetchMegaHoldings,
+    yuanta: fetchYuantaHoldings,
   };
 
   for (const etf of etfs) {

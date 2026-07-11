@@ -43,6 +43,7 @@ const etfs = [
   { code: '00992A', name: '群益台灣科技創新主動式ETF', source: 'capital', fundCode: '500' },
   { code: '00997A', name: '群益美國增長主動式ETF', source: 'capital', fundCode: '502' },
   { code: '00996A', name: '兆豐台灣豐收主動式ETF', source: 'mega', fundCode: '23' },
+  { code: '00990A', name: '元大全球AI新經濟主動式ETF', source: 'yuanta', fundCode: '00990A' },
 ];
 
 // ezmoney.com.tw（統一投信官網）對第一次沒帶反爬蟲 cookie 的請求，永遠回傳 302 重新導向回同一個
@@ -359,6 +360,20 @@ async function fetchMegaHoldings(id) {
   return rows.map(m => ({ stockCode: m[1], shares: parseFloat(m[3].replace(/,/g, '')), weight: parseFloat(m[4]) }));
 }
 
+// 元大投信（etfapi.yuantaetfs.com）：乾淨的公開 JSON API，不用 cookie/登入。網址結構是
+// 「閘道 + FuncId 參數」，跟一般 REST 路徑完全不同。持股在 FundWeights.StockWeights，
+// 00990A 是全球型基金，code 可能帶交易所字尾（如"AMD US"），純數字的才是台股。
+async function fetchYuantaHoldings(ticker) {
+  const res = await fetch(`https://etfapi.yuantaetfs.com/ectranslation/api/bridge?APIType=ETFAPI&CompanyName=YUANTAFUNDS&PageName=/&DeviceId=elan-quant-sync&FuncId=PCF/Daily&AppName=ETF&Device=3&Platform=ETF&ticker=${ticker}`);
+  if (!res.ok) throw new Error(`元大投信 API HTTP ${res.status}`);
+  const apiRes = await res.json();
+  const rows = apiRes?.FundWeights?.StockWeights;
+  if (!Array.isArray(rows) || rows.length === 0) throw new Error('元大投信 API 回應格式跟預期不符（找不到 FundWeights.StockWeights）');
+  return rows.map(r => ({
+    stockCode: r.code, shares: r.qty != null ? Math.round(r.qty) : null, weight: r.weights,
+  })).filter(h => h.stockCode && isFinite(h.weight));
+}
+
 const FETCHERS = {
   ezmoney: fetchEzmoneyHoldings,
   nomura: fetchNomuraHoldings,
@@ -372,6 +387,7 @@ const FETCHERS = {
   cathay: fetchCathayHoldings,
   capital: fetchCapitalHoldings,
   mega: fetchMegaHoldings,
+  yuanta: fetchYuantaHoldings,
 };
 
 async function main() {
