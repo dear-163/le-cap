@@ -623,10 +623,12 @@ async function runGeminiAnalysis(symbol,companyName,techSummary,gen){
   const fundGrounding=await fetchGroundingText(symbol,'fundamentals');
   if(gen!==analyzeGeneration) return;
   const p1=buildPromptClientSide(symbol,companyName,techSummary,'fundamentals',fundGrounding.text);
-  // 這個標示是程式碼固定渲染的，不是叫AI自己講——重點一（商業模式/護城河/客戶結構/成長動力）
-  // 目前完全沒有即時資料grounding，一律要標；重點二（財務健康數字）則看/api/ground回傳的
-  // source欄位：fmp_3y=美股近3年、tw_latest_quarter=台股TWSE/TPEx官方最新一季、null=無資料。
-  const fundNote=`📌 資料來源標示：<b>商業模式／護城河／客戶結構／成長動力</b>完全基於 AI 一般知識，非即時資料，可能有時效落差，請自行查證公司最新公告與新聞。<b>財務健康數字</b>${
+  // 這個標示是程式碼固定渲染的，不是叫AI自己講——商業模式/護城河/客戶結構沒有即時資料
+  // grounding，一律要標；成長動力則看有沒有真實財報數字可以引用（PROMPT_SECTIONS.fundamentals
+  // 已經要求AI在討論成長動力時要引用真實數字）；財務健康數字看/api/ground回傳的source欄位：
+  // fmp_3y=美股近3年、tw_latest_quarter=台股TWSE/TPEx官方最新一季、null=無資料。
+  const fundHasRealData=fundGrounding.source==='fmp_3y'||fundGrounding.source==='tw_latest_quarter';
+  const fundNote=`📌 資料來源標示：<b>商業模式／護城河／客戶結構</b>基於 AI 一般知識，非即時資料，可能有時效落差，請自行查證公司最新公告與新聞。<b>成長動力</b>${fundHasRealData?'已要求AI引用下方真實財報數字作為討論依據':'同樣基於 AI 一般知識，沒有真實數字可引用'}。<b>財務健康數字</b>${
     fundGrounding.source==='fmp_3y'?'已用 FMP 近3年真實財報數據佐證'
     :fundGrounding.source==='tw_latest_quarter'?'已用 TWSE/TPEx 官方最新一季財報數據佐證（僅單季，非3年趨勢）'
     :'目前沒有真實財報佐證，同樣基於 AI 一般知識'
@@ -654,10 +656,10 @@ const PROMPT_SECTIONS={
 - 商業模式與價值創造邏輯
 - 主要收入來源與業務佔比趨勢
 - 客戶結構與集中度風險
-- 短中長期成長動力
+- 短中長期成長動力（若下方有提供真實財報數據，必須引用其中反映的營收規模、獲利能力等具體數字作為討論依據，不要完全脫離已提供的真實數字空談）
 - 長期競爭優勢護城河（品牌/技術/規模/轉換成本/網路效應）
 
-【分析重點二：財務健康（近3年趨勢）】
+【分析重點二：財務健康（若下方只提供最新一季真實數據而非近3年，請以該單季數字為準，並在評語中明確標註這是單季而非3年趨勢，不要暗示成3年比較）】
 - 3-5項財務亮點（綠燈）
 - 3-5項財務紅旗（警示）
 - 整體財務健康評級：優/良/中/待觀察並說明理由`,
