@@ -15,6 +15,18 @@ if (dateArgIdx !== -1 && process.argv[dateArgIdx + 1]) {
   const m = String(taipei.getUTCMonth() + 1).padStart(2, '0');
   const d = String(taipei.getUTCDate()).padStart(2, '0');
   todayDate = `${y}-${m}-${d}`;
+
+  // 2026-07-12 事故的源頭：手動在週末跑這支腳本，用當下的真實日期（週六/週日）寫入 D1，
+  // 台股當然沒開盤，這天的資料本來就不該存在。active-etf-flow.js 拿這個日期去跟前一個
+  // 交易日比對時，任何一檔ETF那次爬蟲剛好失敗，就會被誤判成「今天股數是0」而顯示假的
+  // 「全部賣光」訊號。加這個檢查擋住最容易發生的情境——沒有明確指定--date、又剛好在
+  // 週末執行——需要的話用--date明確指定或--force略過。
+  const dow = taipei.getUTCDay(); // 0=週日, 6=週六
+  if ((dow === 0 || dow === 6) && !process.argv.includes('--force')) {
+    console.error(`錯誤：今天（${todayDate}，台北時區）是週末，台股沒有開盤，不應該把資料寫入這個日期。`);
+    console.error(`如果要手動補歷史資料，請用 --date YYYY-MM-DD 明確指定實際交易日；如果確定要用今天的日期寫入，請加上 --force。`);
+    process.exit(1);
+  }
 }
 
 console.log(`Starting live Active ETF holdings crawler & sync for date ${todayDate} (${target === '--remote' ? 'REMOTE' : 'LOCAL'})...`);
