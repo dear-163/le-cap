@@ -979,6 +979,50 @@ async function callGeminiJSON(system,prompt,model,schema,gen,retryCount=0){
   }
 }
 
+function parseNumLoose(v){
+  if(v==null) return null;
+  const n=parseFloat(String(v).replace(/[^0-9.\-]/g,''));
+  return isFinite(n)?n:null;
+}
+
+// 事後驗算：prompt指令降低不了AI編數字的機率到0，所以這裡用程式碼把AI回傳的價位跟
+// 真實技術數值（techAIInput，跟AI拿到的是同一份資料）對一遍——停損/停利的基本順序、
+// AI自己被要求遵守的風報比≥1:2規則、跟52週價格區間比對是否離譜。抓不到的問題還是抓不到
+// （AI可能用巧妙但仍然錯的方式維持"看起來合理"的數字），但能擋掉最明顯的離譜幻覺。
+function validateTechAIStrategy(result,techAIInput){
+  const warnings=[];
+  const fp=result.fair_entry_price||{};
+  const ap=result.action_plan||{};
+  const entry=typeof fp.recommended_price==='number'?fp.recommended_price:null;
+  const stopLoss=parseNumLoose(ap.stop_loss);
+  const takeProfit=parseNumLoose(ap.take_profit);
+
+  if(entry==null) warnings.push('AI 未提供可用的合理買入價數值');
+  if(stopLoss==null) warnings.push('AI 提供的停損價無法解析為數字');
+  if(takeProfit==null) warnings.push('AI 提供的停利價無法解析為數字');
+
+  if(entry!=null&&stopLoss!=null&&stopLoss>=entry){
+    warnings.push(`停損價（${stopLoss}）沒有低於合理買入價（${entry}），不符合基本邏輯`);
+  }
+  if(entry!=null&&takeProfit!=null&&takeProfit<=entry){
+    warnings.push(`停利價（${takeProfit}）沒有高於合理買入價（${entry}），不符合基本邏輯`);
+  }
+  if(entry!=null&&stopLoss!=null&&takeProfit!=null&&stopLoss<entry&&takeProfit>entry){
+    const rr=(takeProfit-entry)/(entry-stopLoss);
+    if(rr<1.9) warnings.push(`風險報酬比僅約 1:${rr.toFixed(2)}，未達 prompt 要求 AI 遵守的 1:2 門檻`);
+  }
+
+  const h52=parseNumLoose(techAIInput.h52),l52=parseNumLoose(techAIInput.l52);
+  if(entry!=null&&h52!=null&&l52!=null&&h52>l52){
+    const buffer=(h52-l52)*0.15;
+    if(entry>h52+buffer||entry<l52-buffer){
+      warnings.push(`合理買入價（${entry}）明顯超出52週價格區間（${l52}~${h52}），疑似幻覺數字`);
+    }
+  }
+
+  return warnings;
+}
+
 async function runTechAIStrategy(symbol,companyName,techAIInput,gen){
   if(gen!==analyzeGeneration) return;
   const el=document.getElementById('techAIBox');
@@ -986,14 +1030,14 @@ async function runTechAIStrategy(symbol,companyName,techAIInput,gen){
     const {system,user}=buildTechAIPrompt(symbol,companyName,techAIInput);
     const result=await callGeminiJSON(system,user,selectedModel,TECH_AI_SCHEMA,gen);
     if(gen!==analyzeGeneration||!result) return;
-    renderTechAIStrategy(result);
+    renderTechAIStrategy(result,validateTechAIStrategy(result,techAIInput));
   }catch(e){
     if(gen!==analyzeGeneration) return;
     el.innerHTML=`<div class="error-box">⚠ AI 深度技術判讀失敗：${escapeHtml(e.message)}</div>`;
   }
 }
 
-function renderTechAIStrategy(result){
+function renderTechAIStrategy(result,warnings){
   const el=document.getElementById('techAIBox');
   const sig=result.overall_signal||'';
   const bullish=/多頭|反彈/.test(sig)&&!/弱勢|空頭/.test(sig);
@@ -1004,6 +1048,7 @@ function renderTechAIStrategy(result){
   el.innerHTML=`
 <div class="conclusion-card">
   <div class="conclusion-title">🤖 AI 深度技術判讀（合理買入價與風控策略）</div>
+  ${(warnings&&warnings.length)?`<div class="error-box" style="margin-bottom:12px">🛑 系統自動驗算：以下數字疑似不合理，請勿直接採用<ul style="margin:6px 0 0 18px;padding:0">${warnings.map(w=>`<li>${escapeHtml(w)}</li>`).join('')}</ul></div>`:''}
   <div class="overall-signal">
     <div class="os-label">綜合訊號</div>
     <div class="os-val ${sigClass}">${escapeHtml(sig)}</div>
