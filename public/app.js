@@ -607,11 +607,11 @@ async function fetchGroundingText(symbol,section){
     let url=`/api/ground?symbol=${encodeURIComponent(symbol)}&section=${encodeURIComponent(section)}`;
     if(fmpKey) url+=`&fmpKey=${encodeURIComponent(fmpKey)}`;
     const res=await fetch(url);
-    if(!res.ok) return '';
+    if(!res.ok) return {text:'',source:null};
     const body=await res.json().catch(()=>({}));
-    return body.groundingText||'';
+    return {text:body.groundingText||'',source:body.source||null};
   }catch{
-    return '';
+    return {text:'',source:null};
   }
 }
 
@@ -619,18 +619,20 @@ async function runGeminiAnalysis(symbol,companyName,techSummary,gen){
   const model=selectedModel;
   const fundGrounding=await fetchGroundingText(symbol,'fundamentals');
   if(gen!==analyzeGeneration) return;
-  const p1=buildPromptClientSide(symbol,companyName,techSummary,'fundamentals',fundGrounding);
+  const p1=buildPromptClientSide(symbol,companyName,techSummary,'fundamentals',fundGrounding.text);
   // 這個標示是程式碼固定渲染的，不是叫AI自己講——重點一（商業模式/護城河/客戶結構/成長動力）
-  // 目前完全沒有即時資料grounding，一律要標；重點二（財務健康數字）則視這次symbol有沒有
-  // 抓到FMP真實財報而定（fundGrounding裡有沒有"來源：FMP"這串字可以判斷）。
-  const fundHasRealData=fundGrounding.includes('來源：FMP');
-  const fundNote=`📌 資料來源標示：<b>商業模式／護城河／客戶結構／成長動力</b>完全基於 AI 一般知識，非即時資料，可能有時效落差，請自行查證公司最新公告與新聞。<b>財務健康數字</b>${fundHasRealData?'已用 FMP 近3年真實財報數據佐證':'目前沒有真實財報佐證（僅美股支援即時財報 grounding），同樣基於 AI 一般知識'}。`;
+  // 目前完全沒有即時資料grounding，一律要標；重點二（財務健康數字）則看/api/ground回傳的
+  // source欄位：fmp_3y=美股近3年、tw_latest_quarter=台股TWSE/TPEx官方最新一季、null=無資料。
+  const fundNote=`📌 資料來源標示：<b>商業模式／護城河／客戶結構／成長動力</b>完全基於 AI 一般知識，非即時資料，可能有時效落差，請自行查證公司最新公告與新聞。<b>財務健康數字</b>${
+    fundGrounding.source==='fmp_3y'?'已用 FMP 近3年真實財報數據佐證'
+    :fundGrounding.source==='tw_latest_quarter'?'已用 TWSE/TPEx 官方最新一季財報數據佐證（僅單季，非3年趨勢）'
+    :'目前沒有真實財報佐證，同樣基於 AI 一般知識'
+  }。`;
   await streamGemini({system:p1.system,prompt:p1.user,model,note:fundNote},'fundContent','🏢 公司基本面 + 財務健康（重點一、二）',false,0,gen);
   const valGrounding=await fetchGroundingText(symbol,'valuation');
   if(gen!==analyzeGeneration) return;
-  const p2=buildPromptClientSide(symbol,companyName,techSummary,'valuation',valGrounding);
-  const valHasRealData=valGrounding.includes('來源：FMP');
-  const valNote=`📌 資料來源標示：估值倍數與歷史區間判斷基於 AI 一般知識；同業比較表${valHasRealData?'已用 FMP 真實同業股價/本益比數據佐證':'目前沒有真實同業數據佐證（僅美股支援），同樣基於 AI 一般知識，請自行查證'}。`;
+  const p2=buildPromptClientSide(symbol,companyName,techSummary,'valuation',valGrounding.text);
+  const valNote=`📌 資料來源標示：估值倍數與歷史區間判斷基於 AI 一般知識；同業比較表${valGrounding.source==='fmp_peers'?'已用 FMP 真實同業股價/本益比數據佐證':'目前沒有真實同業數據佐證（美股需要 FMP Key，台股目前尚未支援即時同業比較），同樣基於 AI 一般知識，請自行查證'}。`;
   await streamGemini({system:p2.system,prompt:p2.user,model,note:valNote},'fundContent','💰 估值合理性分析（重點三）',true,0,gen);
   if(gen!==analyzeGeneration) return;
   const p3=buildPromptClientSide(symbol,companyName,techSummary,'risk');

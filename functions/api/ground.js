@@ -39,6 +39,53 @@ async function fetchFinancialsSummary(symbol, fmpKey) {
   }
 }
 
+// 台幣金額用台股慣用的「億元/萬元」格式，跟app.js其他TW數字顯示一致，不用美股習慣的B/M。
+function fmtTwAmt(v) {
+  if (v == null || !isFinite(v)) return 'N/A';
+  const abs = Math.abs(v);
+  if (abs >= 1e8) return (v / 1e8).toFixed(2) + ' 億元';
+  if (abs >= 1e4) return (v / 1e4).toFixed(0) + ' 萬元';
+  return Math.round(v).toLocaleString() + ' 元';
+}
+
+const TWSE_INCOME_URL = 'https://openapi.twse.com.tw/v1/opendata/t187ap06_L_ci';
+const TPEX_INCOME_URL = 'https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap06_O_ci';
+
+// 台股版的「近3年財報數據」grounding，抓TWSE(上市)/TPEx(上櫃)官方公開資訊，不用任何Key。
+// 只涵蓋「一般業」（科技/製造/消費類股），金融/證券/保險/金控類股這個端點沒有涵蓋，抓不到
+// 就回傳null，讀取端會顯示誠實的「無資料」。這個官方API也不支援查歷史季度，只能拿到「最新
+// 一季」，跟美股FMP版本抓近3年不一樣，回傳文字裡要明確講清楚這個差異，避免AI誤把單季數字
+// 講成3年趨勢。
+async function fetchTwFinancialsSummary(symbol) {
+  const isOtc = /\.TWO$/i.test(symbol);
+  const isTwse = /\.TW$/i.test(symbol) && !isOtc;
+  if (!isOtc && !isTwse) return null;
+  const code = symbol.replace(/\.TWO?$/i, '');
+  try {
+    const res = await fetch(isOtc ? TPEX_INCOME_URL : TWSE_INCOME_URL);
+    if (!res.ok) return null;
+    const arr = await res.json();
+    if (!Array.isArray(arr)) return null;
+    const codeField = isOtc ? 'SecuritiesCompanyCode' : '公司代號';
+    const row = arr.find(r => r[codeField] === code);
+    if (!row) return null;
+
+    const rev = Number(row['營業收入']) * 1000;
+    const ni = Number(row['本期淨利（淨損）']) * 1000;
+    const gross = Number(row['營業毛利（毛損）淨額']) * 1000;
+    const opInc = Number(row['營業利益（損失）']) * 1000;
+    if (!isFinite(rev) || rev === 0) return null;
+    const gm = isFinite(gross) ? (gross / rev * 100).toFixed(1) + '%' : 'N/A';
+    const om = isFinite(opInc) ? (opInc / rev * 100).toFixed(1) + '%' : 'N/A';
+    const nm = isFinite(ni) ? (ni / rev * 100).toFixed(1) + '%' : 'N/A';
+    const year = row['Year'] || row['年度'];
+    const season = row['Season'] || row['季別'];
+    return `民國${year}年第${season}季（單季，非3年趨勢）：營業收入 ${fmtTwAmt(rev)}，本期淨利 ${fmtTwAmt(ni)}，毛利率 ${gm}，營業利益率 ${om}，淨利率 ${nm}`;
+  } catch {
+    return null;
+  }
+}
+
 // Grounds the "同業比較" table in real peer quotes instead of the model inventing comparables.
 async function fetchPeersSummary(symbol, fmpKey) {
   try {
@@ -81,21 +128,33 @@ export async function onRequestGet(context) {
   if (cached) return cached;
 
   const isNonUS = NON_US_SUFFIX.test(symbol);
+  const isTwListed = /\.TWO?$/i.test(symbol);
   let body;
   let gotRealData = false;
 
   if (section === 'fundamentals') {
-    const fin = (fmpKey && !isNonUS) ? await fetchFinancialsSummary(symbol, fmpKey) : null;
+    let fin = null, source = null;
+    if (isTwListed) {
+      fin = await fetchTwFinancialsSummary(symbol);
+      source = fin ? 'tw_latest_quarter' : null;
+    } else if (fmpKey && !isNonUS) {
+      fin = await fetchFinancialsSummary(symbol, fmpKey);
+      source = fin ? 'fmp_3y' : null;
+    }
     gotRealData = !!fin;
     body = {
+      source,
       groundingText: fin
-        ? `\n\n【近3年財報數據（來源：FMP，真實數據，請優先採用，不要自行編造不同數字）】\n${fin}`
+        ? (source === 'tw_latest_quarter'
+          ? `\n\n【最新一季財報數據（來源：TWSE/TPEx官方公開資訊，真實數據，僅單季、不是3年趨勢，請優先採用、不要自行編造不同數字，也不要把單季數字誤講成3年趨勢）】\n${fin}`
+          : `\n\n【近3年財報數據（來源：FMP，真實數據，請優先採用，不要自行編造不同數字）】\n${fin}`)
         : `\n\n（註：目前無法取得近3年真實財報數據，請在財務健康段落明確註明此處為一般產業知識推論，並提醒使用者自行查證財報。）`,
     };
   } else if (section === 'valuation') {
     const peers = (fmpKey && !isNonUS) ? await fetchPeersSummary(symbol, fmpKey) : null;
     gotRealData = !!peers;
     body = {
+      source: peers ? 'fmp_peers' : null,
       groundingText: peers
         ? `\n\n【同業比較數據（來源：FMP，真實數據，請優先採用，不要自行編造不同公司或數字）】\n${peers}`
         : `\n\n（註：目前無法取得真實同業比較數據，請在估值比較表格明確註明這是一般產業知識推論的參考數字，並提醒使用者自行查證。）`,
