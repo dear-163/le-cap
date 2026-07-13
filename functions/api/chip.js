@@ -37,28 +37,45 @@ function isoFromRocOrAd(dateStr) {
   return s;
 }
 
+// 舊版直接打 openapi.twse.com.tw/v1/exchangeReport/MI_MARGN，這個端點回應本身完全沒有帶日期
+// 欄位，所以之前用 new Date()（當下日曆日期）硬猜資料的日期——週末/假日，或平日資料還沒
+// 公布時，回應其實是前一個交易日的舊資料，卻被標成「今天」。改用跟 margin-ratio.js 一樣
+// 的舊版 www.twse.com.tw 端點：支援帶日期查詢、且回應會明確帶回真正的資料日期，往前逐日
+// 掃描（跳過週末）找到第一個有效交易日就用那天真正的日期，不用猜的。
 async function fetchMargin(stockCode) {
   try {
-    const res = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/MI_MARGN', { headers: BROWSER_HEADERS });
-    if (!res.ok) return { error: `TWSE MI_MARGN 請求失敗：HTTP ${res.status}` };
-    const arr = await res.json();
-    if (!Array.isArray(arr)) return { error: 'TWSE MI_MARGN 回應格式不是陣列，可能是端點已變更' };
-    const row = arr.find(r => (r['股票代號'] || '').trim() === stockCode);
-    if (!row) return { error: `TWSE MI_MARGN 今日資料中找不到股票代號 ${stockCode}（可能非上市股票，或今日無交易）` };
-    const parseNum = v => { const n = parseFloat(String(v).replace(/,/g, '')); return isFinite(n) ? n : null; };
-    const marginBalance = parseNum(row['融資今日餘額']);
-    const marginLimit = parseNum(row['融資限額']);
-    const shortBalance = parseNum(row['融券今日餘額']);
-    const today = new Date().toISOString().slice(0, 10);
-    const source = 'TWSE MI_MARGN';
-    return {
-      marginBalance: { value: marginBalance, source, date: today },
-      marginUsageRate: { value: (marginBalance != null && marginLimit) ? marginBalance / marginLimit : null, source, date: today },
-      shortBalance: { value: shortBalance, source, date: today },
-      shortToMarginRatio: { value: (shortBalance != null && marginBalance) ? shortBalance / marginBalance : null, source, date: today },
-    };
+    const cursor = new Date();
+    for (let attempts = 0; attempts < 10; attempts++) {
+      const dow = cursor.getUTCDay();
+      if (dow === 0 || dow === 6) { cursor.setUTCDate(cursor.getUTCDate() - 1); continue; }
+      const adDate = toAdDate(cursor);
+      const url = `https://www.twse.com.tw/rwd/zh/marginTrading/MI_MARGN?response=json&date=${adDate}&selectType=ALL`;
+      const res = await fetch(url, { headers: BROWSER_HEADERS });
+      if (res.ok) {
+        const body = await res.json().catch(() => null);
+        if (body && body.stat === 'OK' && Array.isArray(body.tables) && body.tables.length >= 2) {
+          const detailTable = body.tables[1];
+          const row = (detailTable.data || []).find(r => (r[0] || '').trim() === stockCode);
+          const isoDate = isoFromRocOrAd(body.date || adDate);
+          if (!row) return { error: `TWSE 信用交易統計（${isoDate}）中找不到股票代號 ${stockCode}（可能非上市股票）` };
+          const parseNum = v => { const n = parseFloat(String(v).replace(/,/g, '')); return isFinite(n) ? n : null; };
+          const marginBalance = parseNum(row[6]);  // 融資今日餘額
+          const marginLimit = parseNum(row[7]);    // 融資限額（次一營業日限額）
+          const shortBalance = parseNum(row[12]);  // 融券今日餘額
+          const source = 'TWSE 信用交易統計';
+          return {
+            marginBalance: { value: marginBalance, source, date: isoDate },
+            marginUsageRate: { value: (marginBalance != null && marginLimit) ? marginBalance / marginLimit : null, source, date: isoDate },
+            shortBalance: { value: shortBalance, source, date: isoDate },
+            shortToMarginRatio: { value: (shortBalance != null && marginBalance) ? shortBalance / marginBalance : null, source, date: isoDate },
+          };
+        }
+      }
+      cursor.setUTCDate(cursor.getUTCDate() - 1);
+    }
+    return { error: '近期交易日的 TWSE 信用交易統計（融資融券餘額）皆無法取得有效資料，請稍後再試' };
   } catch (e) {
-    return { error: `TWSE MI_MARGN 請求發生例外：${e.message}` };
+    return { error: `TWSE 信用交易統計請求發生例外：${e.message}` };
   }
 }
 
