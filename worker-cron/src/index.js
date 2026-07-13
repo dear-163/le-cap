@@ -685,38 +685,42 @@ async function fetchAndStoreActiveEtfHoldings(db, todayDash) {
     yuanta: fetchYuantaHoldings, jpmorgan: fetchJpmorganHoldings,
   };
 
-  const failedCodes = [];
-  for (const etf of etfs) {
-    try {
-      const fetcher = fetchers[etf.source];
-      if (!fetcher) throw new Error(`未知的資料來源：${etf.source}`);
-      const holdings = await fetcher(etf.fundCode);
+  // 26檔ETF原本是for...of一個接一個序列await，實測2026-07-13：daily_market_data準時在
+  // 18:00寫入，但排在最後這一步26檔全部掛零——最可能是整支worker因為前面已經做了台指收盤/
+  // 漲跌家數/融資/三大法人/全市場個股收盤/Put-Call比/VIXTWN/公債殖利率等一長串序列步驟，
+  // 疊加這裡再序列等26次（有些發行公司如CTBC/Allianz還要多步驟token驗證），總執行時間
+  // 很可能超過Cloudflare的執行時限被系統整個砍斷。改成Promise.allSettled平行送出，
+  // 總耗時取決於最慢的那一檔而不是全部加總，個別失敗（catch）不影響其他檔照樣寫入。
+  const results = await Promise.allSettled(etfs.map(async etf => {
+    const fetcher = fetchers[etf.source];
+    if (!fetcher) throw new Error(`未知的資料來源：${etf.source}`);
+    const holdings = await fetcher(etf.fundCode);
 
-      if (holdings.length === 0) {
-        console.error(`[cron-etf] parsed 0 holdings for ${etf.code}`);
-        failedCodes.push(etf.code);
-        continue;
-      }
+    if (holdings.length === 0) throw new Error('parsed 0 holdings');
 
-      if (holdings.stockValue != null) {
-        await db.prepare(
-          'INSERT OR REPLACE INTO etf_portfolio_value (etf_code, date, stock_value) VALUES (?, ?, ?)'
-        ).bind(etf.code, todayDash, holdings.stockValue).run();
-      }
-
-      const statements = holdings.map(h =>
-        db.prepare(
-          'INSERT OR REPLACE INTO active_etf_holdings (etf_code, etf_name, stock_code, date, shares, weight) VALUES (?, ?, ?, ?, ?, ?)'
-        ).bind(etf.code, etf.name, h.stockCode, todayDash, h.shares, h.weight)
-      );
-
-      await db.batch(statements);
-      console.log(`[cron-etf] successfully stored ${holdings.length} holdings for ${etf.code} (${etf.source}) on ${todayDash}`);
-    } catch (e) {
-      console.error(`[cron-etf] Error crawling ${etf.code} (${etf.source}):`, e.message);
-      failedCodes.push(etf.code);
+    if (holdings.stockValue != null) {
+      await db.prepare(
+        'INSERT OR REPLACE INTO etf_portfolio_value (etf_code, date, stock_value) VALUES (?, ?, ?)'
+      ).bind(etf.code, todayDash, holdings.stockValue).run();
     }
-  }
+
+    const statements = holdings.map(h =>
+      db.prepare(
+        'INSERT OR REPLACE INTO active_etf_holdings (etf_code, etf_name, stock_code, date, shares, weight) VALUES (?, ?, ?, ?, ?, ?)'
+      ).bind(etf.code, etf.name, h.stockCode, todayDash, h.shares, h.weight)
+    );
+
+    await db.batch(statements);
+    console.log(`[cron-etf] successfully stored ${holdings.length} holdings for ${etf.code} (${etf.source}) on ${todayDash}`);
+  }));
+
+  const failedCodes = [];
+  results.forEach((r, i) => {
+    if (r.status === 'rejected') {
+      console.error(`[cron-etf] Error crawling ${etfs[i].code} (${etfs[i].source}):`, r.reason?.message || r.reason);
+      failedCodes.push(etfs[i].code);
+    }
+  });
   // 單獨一行彙總結果——26檔逐一的log訊息很難一眼看出「今天整體狀況正不正常」，這行讓人
   // (或之後的我) 打開 Cloudflare 的 log 只看最後一行就知道要不要往上翻查特定ETF的錯誤細節。
   // 這不會阻止資料缺漏（缺漏本身是預期內、且已在active-etf-flow.js正確處理的情境），
