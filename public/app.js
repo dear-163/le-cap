@@ -947,7 +947,11 @@ async function callGeminiJSON(system,prompt,model,schema,gen,retryCount=0){
           // 這裡直接輸出具體交易價位，比其他文字分析更需要壓低隨機性——溫度比streamGemini
           // 的0.2更低，讓模型盡量貼著systemInstruction裡的計算規則走，少一點自由發揮空間。
           temperature:0.1,
-          maxOutputTokens:2048,
+          // Gemini 3.x的隱藏推理token(thoughtsTokenCount)跟可見輸出共用同一個maxOutputTokens
+          // 額度——這個app先前在streamGemini那邊就踩過同樣的坑(maxOutputTokens:1500太小，
+          // 推理token吃光額度，finishReason變成MAX_TOKENS，只輸出半句就被截斷)，這裡用同一個
+          // 已經驗證過足夠的4096，不要重蹈覆轍。
+          maxOutputTokens:4096,
           responseMimeType:'application/json',
           responseSchema:schema,
           thinkingConfig:{thinkingLevel:'low'},
@@ -990,12 +994,20 @@ async function callGeminiJSON(system,prompt,model,schema,gen,retryCount=0){
   }
 
   const body=await res.json();
+  const finishReason=body?.candidates?.[0]?.finishReason;
   const text=body?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if(!text) throw new Error('AI 回應為空或格式不符（可能被安全過濾攔截）。');
+  // finishReason清楚標示原因時直接講明白，不要讓使用者每次都看到同一句「格式無法解析」
+  // 卻猜不到到底是被截斷還是被安全過濾攔截——MAX_TOKENS代表輸出被腰斬（通常是隱藏推理
+  // token吃了太多額度），這種情況比對一般解析失敗更值得知道具體原因。
+  if(!text){
+    if(finishReason==='MAX_TOKENS') throw new Error('AI 回應在完成前就被截斷（finishReason: MAX_TOKENS），請重新分析一次。');
+    throw new Error(`AI 回應為空或格式不符（finishReason: ${finishReason||'未知'}，可能被安全過濾攔截）。`);
+  }
   try{
     return JSON.parse(text);
   }catch{
-    throw new Error('AI 回應的 JSON 格式無法解析，請重新分析一次。');
+    const reasonNote=finishReason==='MAX_TOKENS'?'（finishReason: MAX_TOKENS，輸出被截斷導致JSON不完整）':'';
+    throw new Error(`AI 回應的 JSON 格式無法解析${reasonNote}，請重新分析一次。`);
   }
 }
 
