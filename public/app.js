@@ -1756,6 +1756,36 @@ async function loadHomepageSentiment() {
 }
 loadHomepageSentiment();
 
+// RSI超賣＋成交量暴增篩選器。結果由worker-cron每天算好存D1，這裡單純讀最新一天，
+// 不在前端重算。剛部署時volume欄位歷史還沒累積滿5個交易日，會是空清單，此時直接
+// 不顯示這格（跟其他首頁小工具一致，不占版面顯示「資料累積中」）。
+async function loadOversoldVolumeScreener() {
+  try {
+    const res = await fetch('/api/screener?t=' + Date.now());
+    if (!res.ok) return;
+    const data = await res.json().catch(() => null);
+    if (!data || data.error || !data.signals?.length) return;
+
+    document.getElementById('oversoldVolumeScreenerDate').textContent = data.date ? `更新日期：${data.date}` : '';
+
+    const listHtml = data.signals.map(s => `
+      <div style="display:flex; justify-content:space-between; align-items:center; padding: 4px 0; border-bottom: 1px dashed var(--border);">
+        <span style="font-weight:600; cursor:pointer; color:var(--text);" onclick="quickLoad('${escapeHtml(s.code)}')">${escapeHtml(s.code)} <span style="font-size:11px;font-weight:normal;color:var(--text3);margin-left:4px;">${escapeHtml(s.name || '')}</span></span>
+        <span style="display:flex; gap:10px; font-size:11px; color:var(--text2);">
+          <span>RSI ${s.rsi != null ? s.rsi.toFixed(1) : '-'}</span>
+          <span class="down" style="font-weight:700;">量 ${s.volumeRatio != null ? s.volumeRatio.toFixed(1) : '-'}x</span>
+        </span>
+      </div>
+    `).join('');
+
+    document.getElementById('oversoldVolumeScreenerList').innerHTML = listHtml;
+    document.getElementById('oversoldVolumeScreenerCard').style.display = 'block';
+  } catch (e) {
+    console.error('Failed to load oversold volume screener:', e);
+  }
+}
+loadOversoldVolumeScreener();
+
 // ─────────────────────────────────────────────
 // 首頁大盤即時報價看板
 // ─────────────────────────────────────────────

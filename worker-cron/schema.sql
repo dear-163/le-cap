@@ -27,9 +27,22 @@ CREATE TABLE IF NOT EXISTS stock_daily_price (
   high REAL,
   low REAL,
   name TEXT,               -- 股票中文名稱，來自 TWSE/TPEx 官方每日資料，不用維護靜態對照表
+  volume REAL,             -- 當日成交量（股），給「RSI超賣+成交量暴增」篩選器用
   PRIMARY KEY (code, date)
 );
 CREATE INDEX IF NOT EXISTS idx_stock_daily_price_code_date ON stock_daily_price(code, date);
+
+-- 首頁「RSI超賣+成交量暴增」篩選器：每天由worker-cron算好整個市場的結果存這裡，
+-- /api/screener.js只需要單純SELECT最新日期，不用每次請求都對全市場1700+檔股票重算RSI。
+CREATE TABLE IF NOT EXISTS daily_screener_signals (
+  date TEXT NOT NULL,
+  code TEXT NOT NULL,
+  name TEXT,
+  rsi REAL,
+  volume_ratio REAL,      -- 今日成交量 / 前5日均量，例如3.5代表今日量是均量的3.5倍（暴增250%）
+  close REAL,
+  PRIMARY KEY (date, code)
+);
 
 -- 大戶持股週快照（只存聚合後的兩個百分比，不存全部17級原始資料），用來算「週變化」。
 -- TDCC 只在每週五更新一次，同一週內重複執行 cron 不會產生新的一列（見 worker-cron/src/index.js 的去重判斷）。

@@ -190,7 +190,8 @@ async function fetchTpexStockDayAll() {
       Name: (r.CompanyName || '').trim(),
       ClosingPrice: r.Close,
       HighestPrice: r.High,
-      LowestPrice: r.Low
+      LowestPrice: r.Low,
+      TradeVolume: r.TradingShares, // TPEx欄位叫TradingShares，正規化成跟TWSE一樣的TradeVolume名稱
     }));
   } catch (e) {
     console.error('Failed to fetch TPEx prices:', e.message);
@@ -231,18 +232,99 @@ async function updateStockPricesAndCountNewHighLow(db, todayAd, stockRows) {
     const close = parseNum(row.ClosingPrice), high = parseNum(row.HighestPrice), low = parseNum(row.LowestPrice);
     if (close == null) continue;
     const name = (row.Name || '').trim() || null;
+    const volume = parseNum(row.TradeVolume);
     const prior = priorMap.get(code);
     if (prior && prior.days >= STOCK_HISTORY_MIN_DAYS) {
       if (high != null && prior.max_high != null && high > prior.max_high) newHighs++;
       if (low != null && prior.min_low != null && low < prior.min_low) newLows++;
     }
     upserts.push(
-      db.prepare('INSERT OR REPLACE INTO stock_daily_price (code, date, close, high, low, name) VALUES (?, ?, ?, ?, ?, ?)')
-        .bind(code, todayAd, close, high, low, name)
+      db.prepare('INSERT OR REPLACE INTO stock_daily_price (code, date, close, high, low, name, volume) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .bind(code, todayAd, close, high, low, name, volume)
     );
   }
   await batchRun(db, upserts);
   return { newHighs, newLows };
+}
+
+// 首頁「RSI超賣+成交量暴增」篩選器。跟52週新高低用同一張stock_daily_price，但只需要近35個
+// 日曆天（RSI-14要15筆收盤價，加上5日均量門檻，35天日曆天緩衝綽綽有餘，遠小於52週新高低
+// 用的380天窗口，這裡故意不共用那個大查詢，避免抓一堆用不到的資料）。RSI公式跟
+// public/app.js的calcRSI用同一套Wilder's smoothing，確保這裡篩出的RSI跟使用者自己點進
+// 個股技術分析頁看到的數字一致。
+const SCREENER_WINDOW_CALENDAR_DAYS = 35;
+const SCREENER_RSI_PERIOD = 14;
+const SCREENER_VOLUME_BASELINE_DAYS = 5;
+const SCREENER_RSI_THRESHOLD = 30;
+const SCREENER_VOLUME_RATIO_THRESHOLD = 3; // 今日量 ≥ 前5日均量的3倍，即「暴增200%」（多了200%＝變成3倍）
+
+async function computeScreenerSignals(db, todayAd) {
+  const cutoff = daysAgoAd(SCREENER_WINDOW_CALENDAR_DAYS);
+  const { results } = await db
+    .prepare('SELECT code, date, close, volume FROM stock_daily_price WHERE date >= ? ORDER BY code, date ASC')
+    .bind(cutoff)
+    .all();
+
+  const byCode = new Map();
+  for (const r of (results || [])) {
+    if (!byCode.has(r.code)) byCode.set(r.code, []);
+    byCode.get(r.code).push(r);
+  }
+
+  const { results: nameRows } = await db
+    .prepare('SELECT code, name FROM stock_daily_price WHERE date = ?')
+    .bind(todayAd)
+    .all();
+  const nameMap = new Map((nameRows || []).map(r => [r.code, r.name]));
+
+  const signals = [];
+  for (const [code, rows] of byCode) {
+    const last = rows[rows.length - 1];
+    if (!last || last.date !== todayAd) continue; // 今天沒資料（停牌/爬蟲缺漏）不列入
+
+    const closes = rows.map(r => r.close).filter(c => c != null);
+    if (closes.length < SCREENER_RSI_PERIOD + 1) continue;
+
+    const gains = [], losses = [];
+    for (let i = 1; i < closes.length; i++) {
+      const d = closes[i] - closes[i - 1];
+      gains.push(d > 0 ? d : 0);
+      losses.push(d < 0 ? -d : 0);
+    }
+    let avgGain = null, avgLoss = null;
+    for (let i = 0; i < gains.length; i++) {
+      if (i < SCREENER_RSI_PERIOD - 1) continue;
+      if (avgGain == null) {
+        avgGain = gains.slice(0, SCREENER_RSI_PERIOD).reduce((s, v) => s + v, 0) / SCREENER_RSI_PERIOD;
+        avgLoss = losses.slice(0, SCREENER_RSI_PERIOD).reduce((s, v) => s + v, 0) / SCREENER_RSI_PERIOD;
+      } else {
+        avgGain = (avgGain * (SCREENER_RSI_PERIOD - 1) + gains[i]) / SCREENER_RSI_PERIOD;
+        avgLoss = (avgLoss * (SCREENER_RSI_PERIOD - 1) + losses[i]) / SCREENER_RSI_PERIOD;
+      }
+    }
+    if (avgGain == null) continue;
+    const rsi = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+    if (rsi >= SCREENER_RSI_THRESHOLD) continue;
+
+    if (last.volume == null) continue;
+    const priorVolRows = rows.slice(0, -1).filter(r => r.volume != null).slice(-SCREENER_VOLUME_BASELINE_DAYS);
+    if (priorVolRows.length < SCREENER_VOLUME_BASELINE_DAYS) continue; // volume欄位剛加，前幾天還沒累積夠不硬湊
+    const avgVol = priorVolRows.reduce((s, r) => s + r.volume, 0) / priorVolRows.length;
+    if (!(avgVol > 0)) continue;
+    const volumeRatio = last.volume / avgVol;
+    if (volumeRatio < SCREENER_VOLUME_RATIO_THRESHOLD) continue;
+
+    signals.push({ code, name: nameMap.get(code) || code, rsi, volumeRatio, close: last.close });
+  }
+
+  if (signals.length > 0) {
+    const upserts = signals.map(s =>
+      db.prepare('INSERT OR REPLACE INTO daily_screener_signals (date, code, name, rsi, volume_ratio, close) VALUES (?, ?, ?, ?, ?, ?)')
+        .bind(todayAd, s.code, s.name, s.rsi, s.volumeRatio, s.close)
+    );
+    await batchRun(db, upserts);
+  }
+  return { count: signals.length };
 }
 
 async function updateHolderSnapshotIfNewWeek(db) {
@@ -818,6 +900,11 @@ export default {
       dayData.new_highs = newHighs;
       dayData.new_lows = newLows;
     } catch (e) { console.error('[cron] 更新個股價格/計算創新高低失敗：', e.message); }
+
+    try {
+      const screener = await computeScreenerSignals(db, todayAd);
+      console.log(`[cron] RSI超賣+量暴增篩選器：${screener.count} 檔符合`);
+    } catch (e) { console.error('[cron] 計算RSI超賣+量暴增篩選器失敗：', e.message); }
 
     try {
       dayData.put_call_ratio = await fetchPutCallRatio();
