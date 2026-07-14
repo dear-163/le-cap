@@ -249,13 +249,21 @@ async function updateHolderSnapshotIfNewWeek(db) {
   const res = await fetch('https://opendata.tdcc.com.tw/getOD.ashx?id=1-5', { headers: BROWSER_HEADERS });
   if (!res.ok) throw new Error(`TDCC HTTP ${res.status}`);
   const text = await res.text();
-  const lines = text.trim().split('\n');
-  if (lines.length < 2) throw new Error('TDCC 回應內容為空');
-  const headers = lines[0].replace(/^﻿/, '').split(',').map(h => h.trim());
+
+  // 實測這份CSV約6.8萬行、2.2MB，但TDCC一週只更新一次，平日6/7天都是同一週的舊資料——
+  // 原本不管是不是同一週，每天都先把整份text.split('\n')成6.8萬個字串的陣列，才去判斷
+  // 要不要跳過，等於白白對6.8萬行做一次CPU工作。改成先只切出前兩行（表頭+第一筆資料，
+  // 用indexOf找換行位置、不用split全部）判斷日期，同一週就直接return，完全不碰後面
+  // 6.8萬行；只有真的遇到新一週的資料才需要split全部、逐行解析。
+  const firstNewline = text.indexOf('\n');
+  if (firstNewline === -1) throw new Error('TDCC 回應內容為空或格式異常');
+  const secondNewline = text.indexOf('\n', firstNewline + 1);
+  const headers = text.slice(0, firstNewline).replace(/^﻿/, '').split(',').map(h => h.trim());
   const idx = { date: headers.indexOf('資料日期'), code: headers.indexOf('證券代號'), level: headers.indexOf('持股分級'), pct: headers.indexOf('占集保庫存數比例%') };
   if (Object.values(idx).some(i => i === -1)) throw new Error(`TDCC CSV 欄位與預期不符：${headers.join('、')}`);
 
-  const tdccDate = lines[1].split(',')[idx.date]?.trim();
+  const firstDataLine = text.slice(firstNewline + 1, secondNewline === -1 ? undefined : secondNewline);
+  const tdccDate = firstDataLine.split(',')[idx.date]?.trim();
   if (!tdccDate) throw new Error('TDCC 無法解析資料日期');
 
   const latest = await db.prepare('SELECT date FROM holder_weekly_snapshot ORDER BY date DESC LIMIT 1').first();
@@ -263,6 +271,9 @@ async function updateHolderSnapshotIfNewWeek(db) {
     return { skipped: true, date: tdccDate };
   }
 
+  // 確定是新的一週才切開全部6.8萬行逐行解析。
+  const lines = text.trim().split('\n');
+  if (lines.length < 2) throw new Error('TDCC 回應內容為空');
   const perCode = new Map(); // code -> { big, mid }
   for (let i = 1; i < lines.length; i++) {
     const cols = lines[i].split(',');
