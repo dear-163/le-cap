@@ -725,7 +725,21 @@ async function fetchAndStoreActiveEtfHoldings(db, todayDash) {
       try {
         const fetcher = fetchers[etf.source];
         if (!fetcher) throw new Error(`未知的資料來源：${etf.source}`);
-        const holdings = await fetcher(etf.fundCode);
+        const rawHoldings = await fetcher(etf.fundCode);
+
+        // 過濾掉明顯不合理的持股列——weight應該落在0~100%之間，shares如果有值應該是非負數。
+        // 任一檔fetcher的解析邏輯萬一欄位對錯位（例如目標網站改版），與其把離譜數字悄悄寫進
+        // D1污染後續加減碼計算（跟twtazu_od選錯欄位那個bug是同一類問題），不如直接濾掉
+        // 這幾筆並在log留下數量，之後查起來才有線索。
+        const holdings = rawHoldings.filter(h => {
+          const weightOk = typeof h.weight === 'number' && isFinite(h.weight) && h.weight >= 0 && h.weight <= 100;
+          const sharesOk = h.shares == null || (isFinite(h.shares) && h.shares >= 0);
+          return weightOk && sharesOk;
+        });
+        if (rawHoldings.stockValue != null) holdings.stockValue = rawHoldings.stockValue;
+        if (holdings.length < rawHoldings.length) {
+          console.error(`[cron-etf] ${etf.code} (${etf.source})：${rawHoldings.length - holdings.length}/${rawHoldings.length} 筆持股資料weight/shares不合理，已濾掉不寫入`);
+        }
 
         if (holdings.length === 0) throw new Error('parsed 0 holdings');
 
