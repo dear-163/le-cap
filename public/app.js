@@ -859,6 +859,18 @@ function buildTechAIPrompt(symbol,companyName,t){
 
 ---
 
+---
+
+## 操作風格分類 (Style Archetype)
+
+除了買賣策略本身，你還要根據下方技術數據的「特徵」（不是猜測基本面或消息面，純粹看技術指標呈現出的樣貌），判斷目前這個技術設定比較貼近哪一種操作風格：
+
+*   **當沖／短線動能型**：布林通道開口寬（高波動）、成交量急速放大、現價緊貼布林上軌或下軌邊界、KD/RSI 出現鈍化——這種設定波動大、進出節奏快，比較適合短線操作，不適合長抱。
+*   **波段／趨勢持有型**：均線多頭排列且緩步上揚（非暴衝）、量能溫和放大、現價落在布林中軌附近、無極端超買超賣——這種設定走勢穩健，比較適合抱波段。
+*   **題材輪動／噴出型**：現價剛突破近期盤整區間或站上樞紐 R1/R2、成交量較 10 日均量放大 2 倍以上、MACD 剛翻多或能量柱由負轉正——這種設定是噴出段的樣貌，機會與過熱風險並存。
+
+這只是描述「現在這個技術圖形長得像哪一種」，不是要你去模仿任何特定交易者的個人操作習慣，也不是操作指示——分類理由必須引用上面實際的數值特徵，不可憑空判斷。
+
 所有價位數字（合理買入價、停損、停利）必須是從使用者提供的均線、樞紐點、布林通道等數值合理推算出來的，不可虛構不存在於輸入數據中的價位。
 請嚴格按照指定的 JSON Schema 輸出，不要包含任何 markdown 或程式碼區塊標記、也不要加任何 JSON 以外的說明文字。所有價位數字使用現價相同的小數位數。`;
 
@@ -901,6 +913,14 @@ const TECH_AI_SCHEMA={
     overall_signal:{type:'STRING',enum:['強勢多頭','偏多反彈','盤整中性','弱勢空頭','跌深反彈']},
     matched_strategy:{type:'STRING'},
     technical_nuance_warning:{type:'STRING'},
+    style_archetype:{
+      type:'OBJECT',
+      properties:{
+        label:{type:'STRING',enum:['當沖／短線動能型','波段／趨勢持有型','題材輪動／噴出型']},
+        rationale:{type:'STRING'},
+      },
+      required:['label','rationale'],
+    },
     fair_entry_price:{
       type:'OBJECT',
       properties:{
@@ -919,7 +939,7 @@ const TECH_AI_SCHEMA={
       required:['stop_loss','take_profit'],
     },
   },
-  required:['overall_signal','matched_strategy','technical_nuance_warning','fair_entry_price','action_plan'],
+  required:['overall_signal','matched_strategy','technical_nuance_warning','style_archetype','fair_entry_price','action_plan'],
 };
 
 // 跟streamGemini走同一套429/503重試與額度偵測邏輯，但streamGemini是綁定SSE串流+特定DOM結構寫死的，
@@ -1089,6 +1109,7 @@ function renderTechAIStrategy(result,warnings){
   const sigClass=bullish?'up':bearish?'down':'neutral';
   const fp=result.fair_entry_price||{};
   const ap=result.action_plan||{};
+  const style=result.style_archetype||{};
   el.innerHTML=`
 <div class="conclusion-card">
   <div class="conclusion-title">🤖 AI 深度技術判讀（合理買入價與風控策略）</div>
@@ -1098,6 +1119,7 @@ function renderTechAIStrategy(result,warnings){
     <div class="os-val ${sigClass}">${escapeHtml(sig)}</div>
     <div class="os-sub">${escapeHtml(result.matched_strategy||'')}</div>
   </div>
+  ${style.label?`<div class="info-box" style="margin-top:12px;border-left:3px solid var(--blue)"><b>操作風格分類：${escapeHtml(style.label)}</b><br>${escapeHtml(style.rationale||'')}</div>`:''}
   ${result.technical_nuance_warning?`<div class="info-box" style="margin-top:12px;border-left:3px solid var(--amber)">⚠️ ${escapeHtml(result.technical_nuance_warning)}</div>`:''}
   <div class="ind-card" style="margin-top:12px;background:var(--bg3)">
     <div class="ind-title">🎯 合理買入價</div>
