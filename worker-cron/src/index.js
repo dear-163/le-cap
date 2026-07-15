@@ -877,6 +877,23 @@ export default {
       console.error(`[cron] 今天（${todayAd}，台北時區）是週末，台股沒有開盤，整個排程本次直接跳過，不寫入任何資料。`);
       return;
     }
+
+    // 主動式ETF持股爬蟲獨立成第二個cron trigger（10:05 UTC，見wrangler.toml），跟下面
+    // 一長串步驟分開跑、各自有自己完整的執行時間預算，不用跟前面的步驟搶。event.cron
+    // 用來分辨這次是哪一個排程觸發的；本機wrangler dev --test-scheduled不帶--cron參數時
+    // event.cron會是空字串，這裡當成主排程處理，方便本機測試不用額外指定。
+    if (event.cron === '5 10 * * 1-5') {
+      try {
+        // active_etf_holdings.date 統一用 YYYY-MM-DD（跟 scripts/sync_active_etfs.js 手動同步
+        // 腳本一致）——這裡故意不用 todayAd（YYYYMMDD，其他表用的格式），避免同一張表混入
+        // 兩種日期格式，導致 functions/api/active-etf-flow.js 「取最新兩個日期」的字串排序
+        // 邏輯失準。
+        await fetchAndStoreActiveEtfHoldings(db, todayDash);
+        console.log('[cron] 主動式 ETF 持股爬蟲執行完成');
+      } catch (e) { console.error('[cron] 主動式 ETF 持股爬蟲失敗：', e.message); }
+      return;
+    }
+
     const dayData = {
       date: todayAd, taiex_close: null, advancers: null, decliners: null, new_highs: null, new_lows: null,
       margin_balance_total: null, inst_net_buy_count: null, inst_net_sell_count: null,
@@ -958,13 +975,5 @@ export default {
       const holderResult = await updateHolderSnapshotIfNewWeek(db);
       console.log('[cron] holder_weekly_snapshot：', JSON.stringify(holderResult));
     } catch (e) { console.error('[cron] 更新大戶持股週快照失敗：', e.message); }
-
-    try {
-      // active_etf_holdings.date 統一用 YYYY-MM-DD（跟 scripts/sync_active_etfs.js 手動同步腳本
-      // 一致）——這裡故意不用 todayAd（YYYYMMDD，其他表用的格式），避免同一張表混入兩種日期
-      // 格式，導致 functions/api/active-etf-flow.js 「取最新兩個日期」的字串排序邏輯失準。
-      await fetchAndStoreActiveEtfHoldings(db, todayDash);
-      console.log('[cron] 主動式 ETF 持股爬蟲執行完成');
-    } catch (e) { console.error('[cron] 主動式 ETF 持股爬蟲失敗：', e.message); }
   },
 };

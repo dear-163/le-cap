@@ -16,5 +16,13 @@ database_id = "dd4ed81c-fb85-43fd-b4ba-4485857fa6fe"
 # daily_market_data.updated_at records the actual wall-clock write time each day, so if 18:00 ever
 # proves too early (fields showing NULL because TWSE hadn't settled yet), that'll be directly visible
 # in the data rather than silently guessed at.
+#
+# 第二個排程（10:05 UTC = 18:05台北）專門給主動式ETF持股爬蟲。2026-07-13與2026-07-15
+# 兩次正式排程都整批0/26掛零、但事後手動補跑都能成功24-26/26——這代表不是爬蟲程式本身
+# 的問題，是「跟前面一長串序列步驟(台指/漲跌家數/融資/三大法人/全市場個股/RSI篩選器/
+# Put-Call/VIX/公債殖利率)共用同一次呼叫的執行時間預算」，尖峰時段前面步驟變慢時，
+# 輪到最重的ETF步驟已經沒有時間預算，被Cloudflare平台層級直接砍斷（不會進try/catch，
+# 也不會留下任何log）。分成兩個各自獨立的cron trigger，靠scheduled()收到的event.cron
+# 字串分辨這次是哪一個，讓ETF步驟有自己完整的一份執行時間預算，不用跟前面的步驟搶。
 [triggers]
-crons = ["0 10 * * 1-5"]
+crons = ["0 10 * * 1-5", "5 10 * * 1-5"]
