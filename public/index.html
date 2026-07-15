@@ -141,11 +141,18 @@
     </div>
     <div class="oversold-volume-screener-card market-card hide-until-ready" id="oversoldVolumeScreenerCard" style="text-align: left; max-width: 600px;">
       <div style="font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
-        <span>📉 RSI超賣＋成交量暴增</span>
+        <span>📊 RSI極端值＋成交量暴增</span>
         <span style="font-size: 10px; font-weight: normal; color: var(--text3);" id="oversoldVolumeScreenerDate"></span>
       </div>
-      <div class="ind-card" style="padding: 12px 14px; background: var(--bg3);">
-        <div id="oversoldVolumeScreenerList" style="display: flex; flex-direction: column; gap: 6px; font-size: 12px;"></div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+        <div class="ind-card" style="padding: 12px 14px; background: var(--bg3);">
+          <div style="font-size: 11px; color: var(--red); font-weight: 700; margin-bottom: 8px; text-transform: uppercase;">📉 超賣（潛在反彈）</div>
+          <div id="oversoldVolumeScreenerList" style="display: flex; flex-direction: column; gap: 6px; font-size: 12px;"></div>
+        </div>
+        <div class="ind-card" style="padding: 12px 14px; background: var(--bg3);">
+          <div style="font-size: 11px; color: var(--green); font-weight: 700; margin-bottom: 8px; text-transform: uppercase;">📈 超買（潛在過熱）</div>
+          <div id="overboughtVolumeScreenerList" style="display: flex; flex-direction: column; gap: 6px; font-size: 12px;"></div>
+        </div>
       </div>
     </div>
     <div id="marketLiveSection" class="market-card" style="text-align:left; max-width:760px;">

@@ -32,8 +32,9 @@ CREATE TABLE IF NOT EXISTS stock_daily_price (
 );
 CREATE INDEX IF NOT EXISTS idx_stock_daily_price_code_date ON stock_daily_price(code, date);
 
--- 首頁「RSI超賣+成交量暴增」篩選器：每天由worker-cron算好整個市場的結果存這裡，
+-- 首頁「RSI超賣/超買+成交量暴增」篩選器：每天由worker-cron算好整個市場的結果存這裡，
 -- /api/screener.js只需要單純SELECT最新日期，不用每次請求都對全市場1700+檔股票重算RSI。
+-- 一檔股票同一天RSI不可能同時<30又>70，所以signal_type不影響(date,code)的唯一性。
 CREATE TABLE IF NOT EXISTS daily_screener_signals (
   date TEXT NOT NULL,
   code TEXT NOT NULL,
@@ -41,6 +42,7 @@ CREATE TABLE IF NOT EXISTS daily_screener_signals (
   rsi REAL,
   volume_ratio REAL,      -- 今日成交量 / 前5日均量，例如3.5代表今日量是均量的3.5倍（暴增250%）
   close REAL,
+  signal_type TEXT NOT NULL DEFAULT 'oversold',  -- 'oversold'（RSI<30）或 'overbought'（RSI>70）
   PRIMARY KEY (date, code)
 );
 

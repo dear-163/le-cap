@@ -247,15 +247,19 @@ async function updateStockPricesAndCountNewHighLow(db, todayAd, stockRows) {
   return { newHighs, newLows };
 }
 
-// 首頁「RSI超賣+成交量暴增」篩選器。跟52週新高低用同一張stock_daily_price，但只需要近35個
+// 首頁「RSI超賣/超買+成交量暴增」篩選器。跟52週新高低用同一張stock_daily_price，但只需要近35個
 // 日曆天（RSI-14要15筆收盤價，加上5日均量門檻，35天日曆天緩衝綽綽有餘，遠小於52週新高低
 // 用的380天窗口，這裡故意不共用那個大查詢，避免抓一堆用不到的資料）。RSI公式跟
 // public/app.js的calcRSI用同一套Wilder's smoothing，確保這裡篩出的RSI跟使用者自己點進
 // 個股技術分析頁看到的數字一致。
+// 超賣（潛在反彈訊號）與超買（潛在過熱訊號）共用同一次全市場掃描與同一套成交量暴增門檻，
+// 只是RSI的判斷方向相反——同一檔股票同一天不可能兩邊都中，用signal_type區分即可，
+// 不需要為超買另外再查一次stock_daily_price（省一次D1查詢）。
 const SCREENER_WINDOW_CALENDAR_DAYS = 35;
 const SCREENER_RSI_PERIOD = 14;
 const SCREENER_VOLUME_BASELINE_DAYS = 5;
-const SCREENER_RSI_THRESHOLD = 30;
+const SCREENER_RSI_OVERSOLD_THRESHOLD = 30;
+const SCREENER_RSI_OVERBOUGHT_THRESHOLD = 70;
 const SCREENER_VOLUME_RATIO_THRESHOLD = 3; // 今日量 ≥ 前5日均量的3倍，即「暴增200%」（多了200%＝變成3倍）
 
 async function computeScreenerSignals(db, todayAd) {
@@ -304,7 +308,10 @@ async function computeScreenerSignals(db, todayAd) {
     }
     if (avgGain == null) continue;
     const rsi = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
-    if (rsi >= SCREENER_RSI_THRESHOLD) continue;
+    let signalType;
+    if (rsi < SCREENER_RSI_OVERSOLD_THRESHOLD) signalType = 'oversold';
+    else if (rsi > SCREENER_RSI_OVERBOUGHT_THRESHOLD) signalType = 'overbought';
+    else continue; // RSI在中性區間，兩邊都不算
 
     if (last.volume == null) continue;
     const priorVolRows = rows.slice(0, -1).filter(r => r.volume != null).slice(-SCREENER_VOLUME_BASELINE_DAYS);
@@ -314,17 +321,19 @@ async function computeScreenerSignals(db, todayAd) {
     const volumeRatio = last.volume / avgVol;
     if (volumeRatio < SCREENER_VOLUME_RATIO_THRESHOLD) continue;
 
-    signals.push({ code, name: nameMap.get(code) || code, rsi, volumeRatio, close: last.close });
+    signals.push({ code, name: nameMap.get(code) || code, rsi, volumeRatio, close: last.close, signalType });
   }
 
   if (signals.length > 0) {
     const upserts = signals.map(s =>
-      db.prepare('INSERT OR REPLACE INTO daily_screener_signals (date, code, name, rsi, volume_ratio, close) VALUES (?, ?, ?, ?, ?, ?)')
-        .bind(todayAd, s.code, s.name, s.rsi, s.volumeRatio, s.close)
+      db.prepare('INSERT OR REPLACE INTO daily_screener_signals (date, code, name, rsi, volume_ratio, close, signal_type) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .bind(todayAd, s.code, s.name, s.rsi, s.volumeRatio, s.close, s.signalType)
     );
     await batchRun(db, upserts);
   }
-  return { count: signals.length };
+  const oversoldCount = signals.filter(s => s.signalType === 'oversold').length;
+  const overboughtCount = signals.filter(s => s.signalType === 'overbought').length;
+  return { count: signals.length, oversoldCount, overboughtCount };
 }
 
 async function updateHolderSnapshotIfNewWeek(db) {
@@ -911,8 +920,8 @@ export default {
 
     try {
       const screener = await computeScreenerSignals(db, todayAd);
-      console.log(`[cron] RSI超賣+量暴增篩選器：${screener.count} 檔符合`);
-    } catch (e) { console.error('[cron] 計算RSI超賣+量暴增篩選器失敗：', e.message); }
+      console.log(`[cron] RSI超賣/超買+量暴增篩選器：共 ${screener.count} 檔符合（超賣 ${screener.oversoldCount}、超買 ${screener.overboughtCount}）`);
+    } catch (e) { console.error('[cron] 計算RSI超賣/超買+量暴增篩選器失敗：', e.message); }
 
     try {
       dayData.put_call_ratio = await fetchPutCallRatio();
