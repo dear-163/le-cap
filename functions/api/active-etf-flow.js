@@ -1,3 +1,5 @@
+import { saveSnapshot, loadSnapshotFallback } from '../_lib/kvSnapshot.js';
+
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
 }
@@ -393,13 +395,21 @@ export async function onRequestGet(context) {
     const buys = changes.filter(c => c.changeAmount > 0).sort((a, b) => b.changeAmount - a.changeAmount).slice(0, 5);
     const sells = changes.filter(c => c.changeAmount < 0).sort((a, b) => a.changeAmount - b.changeAmount).slice(0, 5);
 
-    return json({
+    const marketWidePayload = {
       date: todayDate,
       comparedTo: yesterdayDate,
       rankings: { buys, sells }
-    });
+    };
+    // 首頁ETF排行卡片只用這個「無symbol」的市場全體分支，個股查詢（有symbol）先不加快照——
+    // 那邊的回應結構跟這裡不同，範圍留給之後有需要再做。
+    if (!symbol) context.waitUntil(saveSnapshot(env, 'active-etf-flow', marketWidePayload));
+    return json(marketWidePayload);
 
   } catch (error) {
+    if (!symbol) {
+      const fallback = await loadSnapshotFallback(env, 'active-etf-flow');
+      if (fallback) return json(fallback);
+    }
     return json({ error: `查詢主動式 ETF 籌碼數據失敗：${error.message}` }, 500);
   }
 }

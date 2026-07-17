@@ -1,6 +1,8 @@
 // 台股大盤三大法人（外資+投信+自營商合計）當日買賣超金額排行——跟 active-etf-flow.js
 // 的「主動式 ETF 經理人加減碼」是完全不同的兩件事：這裡是全市場、以官方 TWSE T86
 // 申報資料為準，不依賴任何主動式 ETF 的持股爬蟲來源。
+import { saveSnapshot, loadSnapshotFallback } from '../_lib/kvSnapshot.js';
+
 const BROWSER_HEADERS = {
   'Accept': 'application/json',
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -102,13 +104,17 @@ export async function onRequestGet(context) {
     const buys = changes.filter(c => c.netAmount > 0).sort((a, b) => b.netAmount - a.netAmount).slice(0, 5);
     const sells = changes.filter(c => c.netAmount < 0).sort((a, b) => a.netAmount - b.netAmount).slice(0, 5);
 
-    return json({
+    const result = {
       date: isoFromRocOrAd(body.date || adDate),
       source: 'TWSE T86（三大法人買賣超日報）',
       buys,
       sells,
-    });
+    };
+    context.waitUntil(saveSnapshot(env, 'market-flow', result));
+    return json(result);
   } catch (error) {
+    const fallback = await loadSnapshotFallback(env, 'market-flow');
+    if (fallback) return json(fallback);
     return json({ error: `查詢台股三大法人買賣超排行失敗：${error.message}` }, 500);
   }
 }

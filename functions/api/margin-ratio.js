@@ -3,6 +3,8 @@
 //   - 分母「融資金額」：TWSE 官方信用交易統計表本身就有現成的市場總額（仟元），不用自己加總推算。
 //   - 分子「擔保品市值」：同一個 TWSE 端點的個股明細表給每檔股票的融資今日餘額（張），
 //     乘上該股最新收盤價（來自 stock_daily_price）加總得出，沒有收盤價的股票就跳過不計入。
+import { saveSnapshot, loadSnapshotFallback } from '../_lib/kvSnapshot.js';
+
 const BROWSER_HEADERS = {
   'Accept': 'application/json',
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -102,7 +104,7 @@ export async function onRequestGet(context) {
 
     const ratio = (collateralValue / marginAmountNTD) * 100;
 
-    return json({
+    const result = {
       date: isoFromAd(body.date || adDate),
       source: 'TWSE 信用交易統計（融資融券餘額）',
       ratio: Math.round(ratio * 100) / 100,
@@ -110,8 +112,12 @@ export async function onRequestGet(context) {
       marginAmount: marginAmountNTD,
       matchedStocks,
       skippedNoPrice,
-    });
+    };
+    context.waitUntil(saveSnapshot(env, 'margin-ratio', result));
+    return json(result);
   } catch (error) {
+    const fallback = await loadSnapshotFallback(env, 'margin-ratio');
+    if (fallback) return json(fallback);
     return json({ error: `查詢台股融資維持率失敗：${error.message}` }, 500);
   }
 }

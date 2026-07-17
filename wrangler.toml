@@ -12,3 +12,11 @@ database_id = "dd4ed81c-fb85-43fd-b4ba-4485857fa6fe"
 
 # KV namespace binding (RATE_LIMIT_KV) is optional (Yahoo cookie/crumb caching only) and not
 # yet created — add a [[kv_namespaces]] block here the same way if/when you set one up.
+
+# 2026-07-16晚上發生過一次Cloudflare D1全服務層級中斷（連SELECT 1都失敗），影響所有
+# 依賴D1的API同時失效，首頁所有卡片一起消失。SNAPSHOT_KV存每個D1端點最近一次成功回應
+# 的完整JSON快照，D1查詢失敗時退回讀這份快照（標示為稍舊資料），而不是整格消失——
+# 見 functions/_lib/kvSnapshot.js。
+[[kv_namespaces]]
+binding = "SNAPSHOT_KV"
+id = "f408eff351f04797a86f5449ac0dd432"

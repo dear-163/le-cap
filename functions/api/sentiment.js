@@ -1,3 +1,5 @@
+import { saveSnapshot, loadSnapshotFallback } from '../_lib/kvSnapshot.js';
+
 // 市場情緒指數（自製「貪婪指數」）。完全依賴 D1（daily_market_data，由 worker-cron 每日排程寫入）。
 // 方法論：等權重 + 歷史百分位標準化（不是自訂加權公式），比照 CNN Fear & Greed Index 的 7
 // 因子架構，每個因子換成對應的台股資料源——
@@ -139,6 +141,8 @@ export async function onRequestGet(context) {
       .all();
     rows = result.results || [];
   } catch (e) {
+    const fallback = await loadSnapshotFallback(env, 'sentiment');
+    if (fallback) return json(fallback);
     return json({ error: `查詢 D1 daily_market_data 失敗：${e.message}` }, 500);
   }
 
@@ -186,7 +190,7 @@ export async function onRequestGet(context) {
     maturityMessage = `資料累積中，${ready.length}/${INDICATORS.length} 項指標可用（需要至少 3 項才能顯示總分）。`;
   }
 
-  const response = json({
+  const payload = {
     indicators,
     readyCount: ready.length,
     totalIndicators: INDICATORS.length,
@@ -196,7 +200,9 @@ export async function onRequestGet(context) {
     methodology: '等權重 + 歷史百分位標準化（近252個交易日），方法論參考 CNN Fear & Greed Index，非官方標準，僅供參考。',
     latestDate: rows[rows.length - 1].date,
     latestUpdatedAt: rows[rows.length - 1].updated_at || null,
-  }, 200, { 'Cache-Control': 'public, max-age=600' });
+  };
+  context.waitUntil(saveSnapshot(env, 'sentiment', payload));
+  const response = json(payload, 200, { 'Cache-Control': 'public, max-age=600' });
   context.waitUntil(cache.put(cacheKey, response.clone()));
   return response;
 }

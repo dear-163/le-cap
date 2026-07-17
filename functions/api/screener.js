@@ -2,6 +2,8 @@
 // 這裡只是單純讀最新一天的資料，不在請求當下對全市場重算RSI（那樣每次首頁載入都要算
 // 1700+檔股票的RSI，太慢也太浪費）。超賣（潛在反彈）與超買（潛在過熱）用同一個date、
 // 同一次查詢拆成兩組回傳，前端各自渲染成一張卡片裡的左右兩欄。
+import { saveSnapshot, loadSnapshotFallback } from '../_lib/kvSnapshot.js';
+
 function json(obj, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json', ...extraHeaders } });
 }
@@ -42,7 +44,7 @@ export async function onRequestGet(context) {
     const toSignal = r => ({ code: r.code, name: r.name, rsi: r.rsi, volumeRatio: r.volume_ratio, close: r.close });
     const rows = results || [];
 
-    const response = json({
+    const payload = {
       date: latestDate,
       criteria: {
         oversold: 'RSI(14) < 30，且成交量 ≥ 前5個交易日均量的3倍（暴增200%以上）',
@@ -51,10 +53,14 @@ export async function onRequestGet(context) {
       source: 'TWSE/TPEx 官方每日收盤資料（本站自行計算RSI與成交量倍數）',
       oversold: rows.filter(r => r.signal_type === 'oversold').map(toSignal),
       overbought: rows.filter(r => r.signal_type === 'overbought').map(toSignal),
-    }, 200, { 'Cache-Control': 'public, max-age=600' });
+    };
+    context.waitUntil(saveSnapshot(env, 'screener', payload));
+    const response = json(payload, 200, { 'Cache-Control': 'public, max-age=600' });
     context.waitUntil(cache.put(cacheKey, response.clone()));
     return response;
   } catch (error) {
+    const fallback = await loadSnapshotFallback(env, 'screener');
+    if (fallback) return json(fallback);
     return json({ error: `查詢RSI超賣/超買＋成交量暴增篩選器失敗：${error.message}` }, 500);
   }
 }

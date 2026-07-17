@@ -1646,6 +1646,15 @@ function downloadReport(){
 }
 document.getElementById('symbolInput').addEventListener('keydown',e=>{if(e.key==='Enter')analyze();});
 
+// D1掛掉時後端會退回KV快照（見functions/_lib/kvSnapshot.js），標示stale:true。這裡刻意
+// 明確顯示「暫時無法連線，顯示快照」而不是靜默沿用日期字串——快照看起來像即時資料但其實
+// 是舊資料，比卡片直接消失更容易誤導使用者，必須讓使用者知道現在看到的不是最新狀態。
+function staleNoteHtml(date, stale) {
+  const dateStr = date ? `更新日期：${date}` : '';
+  if (!stale) return dateStr;
+  return `${dateStr} <span style="color:var(--amber);">（資料庫暫時無法連線，顯示上次快照）</span>`;
+}
+
 async function loadActiveEtfRankings() {
   try {
     const res = await fetch('/api/active-etf-flow?t=' + Date.now());
@@ -1665,7 +1674,7 @@ async function loadActiveEtfRankings() {
       return v.toLocaleString() + ' 元';
     };
 
-    document.getElementById('activeEtfRankingsDate').textContent = date ? `更新日期：${date}` : '';
+    document.getElementById('activeEtfRankingsDate').innerHTML = staleNoteHtml(date, data.stale);
     
     const buysHtml = buys.map(b => `
       <div style="display:flex; justify-content:space-between; align-items:center; padding: 4px 0; border-bottom: 1px dashed var(--border);">
@@ -1707,7 +1716,7 @@ async function loadMarketFlowRankings() {
       return v.toLocaleString() + ' 元';
     };
 
-    document.getElementById('marketFlowRankingsDate').textContent = date ? `更新日期：${date}` : '';
+    document.getElementById('marketFlowRankingsDate').innerHTML = staleNoteHtml(date, data.stale);
 
     const buysHtml = (buys || []).map(b => `
       <div style="display:flex; justify-content:space-between; align-items:center; padding: 4px 0; border-bottom: 1px dashed var(--border);">
@@ -1741,7 +1750,7 @@ async function loadMarginRatio() {
     if (!data || data.error || data.ratio == null) return;
 
     document.getElementById('marginRatioValue').textContent = data.ratio.toFixed(2) + '%';
-    document.getElementById('marginRatioDate').textContent = data.date ? `更新日期：${data.date}` : '';
+    document.getElementById('marginRatioDate').innerHTML = staleNoteHtml(data.date, data.stale);
     const badgeEl = document.getElementById('marginRatioBadge');
     badgeEl.innerHTML = data.ratio < 105
       ? `<span class="badge badge-red" style="font-size:12px;">🔥 強烈買進</span>`
@@ -1767,8 +1776,8 @@ async function loadHomepageSentiment() {
 
     const sources = [...new Set((data.indicators || []).filter(i => i.status === 'ready').map(i => i.source))];
     document.getElementById('homepageSentimentSources').textContent = sources.length ? `資料來源：${sources.join('、')}` : '';
-    document.getElementById('homepageSentimentDate').textContent = data.latestDate
-      ? `資料日期：${data.latestDate}${data.latestUpdatedAt ? `（台北時間 ${data.latestUpdatedAt} 更新）` : ''}`
+    document.getElementById('homepageSentimentDate').innerHTML = data.latestDate
+      ? `資料日期：${escapeHtml(data.latestDate)}${data.latestUpdatedAt ? `（台北時間 ${escapeHtml(data.latestUpdatedAt)} 更新）` : ''}${data.stale ? ' <span style="color:var(--amber);">（資料庫暫時無法連線，顯示上次快照）</span>' : ''}`
       : '';
 
     document.getElementById('homepageSentimentCard').style.display = 'block';
@@ -1805,7 +1814,7 @@ async function loadOversoldVolumeScreener() {
     const overbought = data.overbought || [];
     if (oversold.length === 0 && overbought.length === 0) return;
 
-    document.getElementById('oversoldVolumeScreenerDate').textContent = data.date ? `更新日期：${data.date}` : '';
+    document.getElementById('oversoldVolumeScreenerDate').innerHTML = staleNoteHtml(data.date, data.stale);
 
     document.getElementById('oversoldVolumeScreenerList').innerHTML =
       oversold.map(screenerRowHtml).join('') || '<div style="color:var(--text3); text-align:center;">今日尚無超賣訊號</div>';
