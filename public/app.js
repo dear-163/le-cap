@@ -1741,7 +1741,10 @@ async function loadMarketFlowRankings() {
 }
 loadMarketFlowRankings();
 
-// 台股大盤融資維持率。低於 105% 是歷史上少見的極端低檔（一般行情約 150-200%），才會標示強烈買進提示。
+// 台股大盤融資使用率——全市場融資今日餘額 ÷ 融資限額，反映散戶槓桿熱度，跟舊版「融資
+// 維持率」（現有部位離斷頭多近）是不同的指標，沒有沿用舊版「<105則強烈買進」那個門檻
+// （那個門檻是維持率專屬的歷史極端值，套在使用率上沒有意義）。目前沒有查證過的使用率
+// 警戒門檻可以引用，先誠實只顯示數字本身，不加沒有根據的燈號判讀。
 async function loadMarginRatio() {
   try {
     const res = await fetch('/api/margin-ratio?t=' + Date.now());
@@ -1751,10 +1754,6 @@ async function loadMarginRatio() {
 
     document.getElementById('marginRatioValue').textContent = data.ratio.toFixed(2) + '%';
     document.getElementById('marginRatioDate').innerHTML = staleNoteHtml(data.date, data.stale);
-    const badgeEl = document.getElementById('marginRatioBadge');
-    badgeEl.innerHTML = data.ratio < 105
-      ? `<span class="badge badge-red" style="font-size:12px;">🔥 強烈買進</span>`
-      : '';
     document.getElementById('marginRatioCard').style.display = 'block';
   } catch (e) {
     console.error('Failed to load margin ratio:', e);
