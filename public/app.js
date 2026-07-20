@@ -1676,16 +1676,21 @@ async function loadActiveEtfRankings() {
 
     document.getElementById('activeEtfRankingsDate').innerHTML = staleNoteHtml(date, data.stale);
     
+    // etfCount：幾檔不同基金「獨立」對這支股票同方向加減碼，跟總金額是不同的訊號（一堆
+    // 小基金各自小買，總金額不一定大，但代表操盤共識度高）——只有 >=2 才顯示，1家沒有
+    // 「共識」可言，顯示反而是雜訊。
+    const countBadge = c => (c != null && c >= 2) ? `<span style="font-size:10px;color:var(--text3);margin-left:4px;">${c}家</span>` : '';
+
     const buysHtml = buys.map(b => `
       <div style="display:flex; justify-content:space-between; align-items:center; padding: 4px 0; border-bottom: 1px dashed var(--border);">
-        <span style="font-weight:600; cursor:pointer; color:var(--text);" onclick="quickLoad('${escapeHtml(b.stock_code)}')">${escapeHtml(b.stock_code)} <span style="font-size:11px;font-weight:normal;color:var(--text3);margin-left:4px;">${escapeHtml(b.stock_name || '')}</span></span>
+        <span style="font-weight:600; cursor:pointer; color:var(--text);" onclick="quickLoad('${escapeHtml(b.stock_code)}')">${escapeHtml(b.stock_code)} <span style="font-size:11px;font-weight:normal;color:var(--text3);margin-left:4px;">${escapeHtml(b.stock_name || '')}</span>${countBadge(b.etfCount)}</span>
         <span class="up" style="font-weight:700;">${b.estimated ? '≈' : ''}+${fmtAmt(b.changeAmount)}</span>
       </div>
     `).join('') || '<div style="color:var(--text3); text-align:center;">今日尚無買超記錄</div>';
 
     const sellsHtml = sells.map(s => `
       <div style="display:flex; justify-content:space-between; align-items:center; padding: 4px 0; border-bottom: 1px dashed var(--border);">
-        <span style="font-weight:600; cursor:pointer; color:var(--text);" onclick="quickLoad('${escapeHtml(s.stock_code)}')">${escapeHtml(s.stock_code)} <span style="font-size:11px;font-weight:normal;color:var(--text3);margin-left:4px;">${escapeHtml(s.stock_name || '')}</span></span>
+        <span style="font-weight:600; cursor:pointer; color:var(--text);" onclick="quickLoad('${escapeHtml(s.stock_code)}')">${escapeHtml(s.stock_code)} <span style="font-size:11px;font-weight:normal;color:var(--text3);margin-left:4px;">${escapeHtml(s.stock_name || '')}</span>${countBadge(s.etfCount)}</span>
         <span class="down" style="font-weight:700;">${s.estimated ? '≈' : ''}${fmtAmt(s.changeAmount)}</span>
       </div>
     `).join('') || '<div style="color:var(--text3); text-align:center;">今日尚無賣超記錄</div>';

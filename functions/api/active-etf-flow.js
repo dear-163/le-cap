@@ -348,12 +348,15 @@ export async function onRequestGet(context) {
 
     // 同一檔股票可能同時被「有股數」跟「只有權重」的 ETF 持有，兩種金額用不同方式算完後
     // 加總到同一個 stock_code——只要其中任何一筆是用權重推算的，整列就標示 estimated。
+    // buyers/sellers 記錄「哪些ETF對這檔股票的貢獻方向是加碼/減碼」，用來算etfCount——
+    // 幾檔不同基金經理人「獨立」同時買同一支股票，是跟總金額不同的訊號（一堆小基金各自
+    // 小買，總金額不一定大，但代表操盤共識度高）。
     const stockAgg = {};
     for (const key in pairMap) {
       const { etf_code, stock_code, today: t, yesterday: y } = pairMap[key];
       if (!t && !y) continue;
       const sharesKnown = (t ? t.shares != null : true) && (y ? y.shares != null : true);
-      if (!stockAgg[stock_code]) stockAgg[stock_code] = { stock_code, changeAmount: 0, estimated: false, hasAny: false };
+      if (!stockAgg[stock_code]) stockAgg[stock_code] = { stock_code, changeAmount: 0, estimated: false, hasAny: false, buyers: new Set(), sellers: new Set() };
       const agg = stockAgg[stock_code];
 
       if (sharesKnown) {
@@ -364,6 +367,7 @@ export async function onRequestGet(context) {
         if (price != null && changeShares !== 0) {
           agg.changeAmount += changeShares * price;
           agg.hasAny = true;
+          (changeShares > 0 ? agg.buyers : agg.sellers).add(etf_code);
         }
       } else {
         const svToday = portfolioValueMap[etf_code]?.[todayDate];
@@ -371,9 +375,11 @@ export async function onRequestGet(context) {
         const valToday = t ? (svToday != null ? (t.weight / 100) * svToday : null) : 0;
         const valYesterday = y ? (svYesterday != null ? (y.weight / 100) * svYesterday : null) : 0;
         if (valToday != null && valYesterday != null && (valToday - valYesterday) !== 0) {
-          agg.changeAmount += (valToday - valYesterday);
+          const d = valToday - valYesterday;
+          agg.changeAmount += d;
           agg.estimated = true;
           agg.hasAny = true;
+          (d > 0 ? agg.buyers : agg.sellers).add(etf_code);
         }
       }
     }
@@ -387,7 +393,8 @@ export async function onRequestGet(context) {
         stock_name: nameMap[code] || code,
         changeAmount: agg.changeAmount,
         action: agg.changeAmount > 0 ? '買超' : '賣超',
-        estimated: agg.estimated || undefined
+        estimated: agg.estimated || undefined,
+        etfCount: (agg.changeAmount > 0 ? agg.buyers : agg.sellers).size,
       });
     }
 
