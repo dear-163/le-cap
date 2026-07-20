@@ -775,6 +775,29 @@ async function fetchJpmorganHoldings(cusip) {
   })).filter(h => h.stockCode && isFinite(h.weight));
 }
 
+// 復華投信官網（Nuxt/Vue前端）背後直接打的JSON API，不用解析HTML。qDate是必填參數，
+// 拿掉的話回傳的不是合法JSON（實測過），所以每次呼叫都要自己組「今天」的YYYY/MM/DD字串。
+async function fetchFuhwaHoldings(fundId) {
+  const { dash } = todayDates();
+  const qDate = dash.replace(/-/g, '/'); // API吃斜線分隔的日期，不是連字號
+  const res = await fetch(`https://www.fhtrust.com.tw/api/assets?fundID=${fundId}&qDate=${qDate}`, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+  });
+  if (!res.ok) throw new Error(`復華投信 API HTTP ${res.status}`);
+  const apiRes = await res.json();
+  const fund = apiRes?.result?.[0];
+  const rows = fund?.detail;
+  if (!Array.isArray(rows)) throw new Error('復華投信 API 回應格式跟預期不符（找不到 result[0].detail，可能今天還沒公布或qDate格式錯誤）');
+  return rows
+    .filter(r => r.ftype === '股票' && r.stockid)
+    .map(r => ({
+      stockCode: r.stockid,
+      stockName: (r.stockname || '').trim(),
+      shares: parseNum(r.qshare),
+      weight: parseNum(String(r.prate_addaccint || '').replace('%', '')),
+    }));
+}
+
 async function fetchAndStoreActiveEtfHoldings(db, todayDash) {
   const etfs = [
     { code: '00981A', name: '統一台股增長主動式ETF', source: 'ezmoney', fundCode: '49YTW' },
@@ -805,6 +828,10 @@ async function fetchAndStoreActiveEtfHoldings(db, todayDash) {
     { code: '00990A', name: '元大全球AI新經濟主動式ETF', source: 'yuanta', fundCode: '00990A' },
     { code: '00401A', name: '摩根台灣鑫收益主動式ETF', source: 'jpmorgan', fundCode: 'TW00000401A1' },
     { code: '00989A', name: '摩根大美國領先科技主動式ETF', source: 'jpmorgan', fundCode: 'TW00000989A5' },
+    // 2026-07-20發現漏追蹤：復華投信旗下727億規模的00991A（比清單裡多數基金都大），
+    // 之前完全沒有這家發行公司的抓取器。復華另一檔00998A（全球金融股票入息）持有的是
+    // 海外金融股不是台股，跟這個「台股加碼排行」功能無關，故意不加。
+    { code: '00991A', name: '復華台灣未來50主動式ETF基金', source: 'fuhwa', fundCode: 'ETF23' },
   ];
 
   const fetchers = {
@@ -812,7 +839,7 @@ async function fetchAndStoreActiveEtfHoldings(db, todayDash) {
     fubon: fetchFubonHoldings, allianz: fetchAllianzHoldings, taishin: fetchTaishinHoldings,
     ab: fetchAllianceBernsteinHoldings, ctbc: fetchCtbcHoldings, first: fetchFirstHoldings,
     cathay: fetchCathayHoldings, capital: fetchCapitalHoldings, mega: fetchMegaHoldings,
-    yuanta: fetchYuantaHoldings, jpmorgan: fetchJpmorganHoldings,
+    yuanta: fetchYuantaHoldings, jpmorgan: fetchJpmorganHoldings, fuhwa: fetchFuhwaHoldings,
   };
 
   // 26檔ETF原本是for...of一個接一個序列await，實測2026-07-13：daily_market_data準時在
