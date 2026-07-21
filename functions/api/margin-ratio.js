@@ -119,6 +119,7 @@ const MAX_SCAN_ATTEMPTS = 20;
 async function fetchRecentMarginTradingDays(n) {
   const cursor = new Date();
   const results = [];
+  let latestBody = null; // 最新一天的完整原始回應，維持率計算需要summary表（tables[0]）
   for (let attempts = 0; attempts < MAX_SCAN_ATTEMPTS && results.length < n; attempts++) {
     const dow = cursor.getUTCDay();
     if (dow === 0 || dow === 6) { cursor.setUTCDate(cursor.getUTCDate() - 1); continue; }
@@ -126,18 +127,71 @@ async function fetchRecentMarginTradingDays(n) {
     const body = await fetchMarginTradingForDate(adDate);
     if (body) {
       const usage = computeUsageRatio(body);
-      if (usage) results.push({ date: isoFromAd(body.date || adDate), ...usage });
+      if (usage) {
+        results.push({ date: isoFromAd(body.date || adDate), ...usage });
+        if (!latestBody) latestBody = body;
+      }
     }
     cursor.setUTCDate(cursor.getUTCDate() - 1);
   }
-  return results; // 新到舊排序
+  return { results, latestBody }; // results新到舊排序
+}
+
+// 融資維持率 = 全市場融資擔保品市值 ÷ 全市場融資金額 × 100%——回答的是「現有融資部位離
+// 斷頭/追繳有多近」，跟上面的使用率（回答「槓桿額度用了多少」）是完全不同的問題，維持率低
+// 不代表槓桿多，使用率高才是，兩者互補不是取代關係。
+//   分母「融資金額」：TWSE官方信用交易統計表本身就有現成的市場總額（仟元），不用自己加總推算。
+//   分子「擔保品市值」：個股明細表每檔股票的融資今日餘額（張）乘上該股最新收盤價（來自
+//     stock_daily_price，D1沒有這檔股票的收盤價就跳過不計入，不用猜的價格）加總得出。
+// 這是全市場「平均」維持率，不代表任何一個別投資人的實際風險——即使平均看起來健康，仍然
+// 可能有個別部位已經逼近追繳線，反之亦然，前端文案要誠實講清楚這個限制，不能當成保證。
+async function computeMaintenanceRatio(env, body) {
+  if (!env.ELAN_QUANT_DB) return null;
+  const summaryTable = body.tables[0];
+  const marginAmountRow = (summaryTable.data || []).find(r => (r[0] || '').includes('融資金額'));
+  const marginAmountThousandNTD = marginAmountRow ? parseNum(marginAmountRow[5]) : null; // 今日餘額欄，單位仟元
+  if (marginAmountThousandNTD == null || marginAmountThousandNTD <= 0) return null;
+  const marginAmountNTD = marginAmountThousandNTD * 1000;
+
+  try {
+    const priceRows = await env.ELAN_QUANT_DB
+      .prepare(`
+        SELECT p.code, p.close FROM stock_daily_price p
+        INNER JOIN (SELECT code, MAX(date) as max_date FROM stock_daily_price GROUP BY code) m
+          ON p.code = m.code AND p.date = m.max_date
+      `)
+      .all();
+    const priceMap = new Map((priceRows.results || []).map(p => [p.code, p.close]));
+
+    const detailTable = body.tables[1];
+    let collateralValue = 0, matchedStocks = 0;
+    for (const row of (detailTable.data || [])) {
+      const code = (row[0] || '').trim();
+      const marginLots = parseNum(row[6]); // 融資今日餘額，單位「張」（1張=1000股）
+      if (!code || !marginLots) continue;
+      const price = priceMap.get(code);
+      if (price == null) continue;
+      collateralValue += marginLots * 1000 * price;
+      matchedStocks++;
+    }
+    if (matchedStocks === 0) return null;
+
+    return {
+      ratio: Math.round((collateralValue / marginAmountNTD) * 100 * 100) / 100,
+      collateralValue,
+      marginAmount: marginAmountNTD,
+      matchedStocks,
+    };
+  } catch {
+    return null; // 維持率是輔助資訊，D1查詢失敗不該讓使用率主功能跟著掛掉
+  }
 }
 
 export async function onRequestGet(context) {
   const { env } = context;
 
   try {
-    const days = await fetchRecentMarginTradingDays(HISTORY_DAYS);
+    const { results: days, latestBody } = await fetchRecentMarginTradingDays(HISTORY_DAYS);
     if (days.length === 0) {
       // 丟例外而不是直接return——這樣才會進到下面catch區塊試KV快照回退，不然TWSE
       // 這端點暫時失敗時，卡片會直接消失、沒有任何錯誤訊息（跟market-flow.js同一類bug）。
@@ -145,7 +199,10 @@ export async function onRequestGet(context) {
     }
 
     const latest = days[0];
-    const percentileInfo = await fetchMarginBalancePercentile(env, latest.totalBalance);
+    const [percentileInfo, maintenanceInfo] = await Promise.all([
+      fetchMarginBalancePercentile(env, latest.totalBalance),
+      latestBody ? computeMaintenanceRatio(env, latestBody) : Promise.resolve(null),
+    ]);
     const result = {
       date: latest.date,
       source: 'TWSE 信用交易統計（融資融券餘額，個股明細加總）',
@@ -157,6 +214,7 @@ export async function onRequestGet(context) {
       history: days.slice().reverse().map(d => ({ date: d.date, ratio: d.ratio })),
       balancePercentile: percentileInfo?.percentile ?? null,
       balancePercentileHistoryDays: percentileInfo?.historyDays ?? null,
+      maintenanceRatio: maintenanceInfo?.ratio ?? null,
     };
     context.waitUntil(saveSnapshot(env, 'margin-ratio', result));
     return json(result);

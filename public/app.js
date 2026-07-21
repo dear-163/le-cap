@@ -1877,6 +1877,20 @@ async function loadMarginRatio() {
         }).join('');
       }
     }
+
+    // 維持率回答的是「現有融資部位離斷頭/追繳有多近」，跟上面的使用率／熱度（回答「槓桿
+    // 額度用了多少」）是完全不同的問題——這裡故意不加「強烈買進」之類的操作建議（本站
+    // 其他地方也拿掉了這類建議，只描述現況），只誠實描述數字代表什麼，並且明講這是全市場
+    // 平均、不是任何個別投資人的實際風險。
+    const maintEl = document.getElementById('marginRatioMaintenance');
+    if (maintEl) {
+      if (data.maintenanceRatio == null) {
+        maintEl.textContent = '';
+      } else {
+        maintEl.innerHTML = `融資維持率：<strong style="color:var(--text);">${data.maintenanceRatio.toFixed(2)}%</strong>`
+          + `<div style="font-size:11px; color:var(--text3); margin-top:2px;">全市場擔保品市值 ÷ 融資金額，一般行情約150~200%；數字越低代表現有部位離追繳/斷頭越近。這是全市場平均，不代表任何個別投資人的實際風險。</div>`;
+      }
+    }
   } catch (e) {
     console.error('Failed to load margin ratio:', e);
   }
