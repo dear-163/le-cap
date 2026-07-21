@@ -173,26 +173,43 @@ async function fetchVixTwn(todayAd) {
 
 // 10年期公債殖利率 + 公司債BBB-AAA信用利差——CNN「避險需求」跟「垃圾債券需求」因子的台股
 // 替代資料，同一個 TPEx 端點一次拿到兩個值，不用cookie/登入。
-async function fetchBondCurve() {
-  // cache:'no-store' — 這個端點連續252天在正式環境0/252成功、但本機測試每次都成功，
-  // 為了排除「Cloudflare邊緣快取到一次失敗回應、之後一直命中同一個壞掉的快取」這個可能性
-  // （這個URL沒有像其他fetch一樣帶時間戳記做cache-busting），加上明確不快取。
-  const res = await fetch('https://www.tpex.org.tw/data/bond/bondCurve.json', { headers: BROWSER_HEADERS, cache: 'no-store' });
-  if (!res.ok) throw new Error(`TPEx bondCurve HTTP ${res.status}`);
+// 2026-07-21：原本查TPEx bondCurve.json（台灣公債殖利率+公司債利差），連續252天在正式環境
+// 0/252成功、本機直接curl或跑本機workerd卻100%成功（甚至連加上cache:'no-store'都沒用）——
+// 跟本session同一天確認過的TWSE MIS/SEC EDGAR同一類「來源端擋Cloudflare共用邊緣IP」問題，
+// 程式碼層面無法修復。查證過TPEx自己的/openapi/目錄（本站其他功能穩定在用、確認不會被擋）
+// 完全沒有這份資料，中央銀行統計資料庫API也只有月資料且沒有信用利差項目，台灣沒有乾淨的
+// 替代來源。改用CNN Fear & Greed Index原始方法論本來就使用的美國資料——這其實比原本硬套
+// 台灣資料的做法更貼近CNN原始定義。避險需求（美國10年公債殖利率）改用Yahoo Finance ^TNX，
+// 已證實在正式環境穩定可用（quote.js/market-chart.js等多處都在用）。垃圾債券需求原本想用
+// FRED的BAMLH0A0HYM2（真正的OAS利差數值），但實測發現FRED這個端點掛在Akamai Bot Manager
+// 後面（回應帶_abck/bm_sz這類Akamai特徵cookie），連本機workerd測試都會直接卡住不回應
+// （比TWSE MIS/TPEx那種「本機成功、只有正式環境失敗」還更差一個等級），改用HYG(高收益債
+// ETF)/LQD(投資等級公司債ETF)的Yahoo Finance價格比值當代理指標——比值越高代表投資人越
+// 願意持有較高風險的高收益債（風險偏好=貪婪），比值下降代表資金轉往較安全的投資等級債券
+// （避險=恐懼），方向跟真正的OAS利差一致（利差收窄時高收益債通常表現優於投資等級債，
+// 比值同步上升），資料源一樣沿用已證實可靠的Yahoo Finance，不是真正的利差數值，所以
+// sentiment.js那邊的label會誠實標示「代理指標」而不是宣稱是真正的信用利差。
+const YAHOO_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+
+async function fetchYahooLatestClose(symbol) {
+  const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=5d&interval=1d`, { headers: { 'Accept': 'application/json', 'User-Agent': YAHOO_UA } });
+  if (!res.ok) throw new Error(`Yahoo ${symbol} HTTP ${res.status}`);
   const j = await res.json();
-  const govRows = j?.bondCruve?.data;
-  if (!Array.isArray(govRows)) throw new Error('TPEx bondCurve 回應格式跟預期不符（找不到 bondCruve.data）');
-  const gov10y = govRows.find(r => r.time === 10)?.index;
-  if (gov10y == null) throw new Error('TPEx bondCurve 找不到10年期公債殖利率（time=10）');
+  const r = j?.chart?.result?.[0];
+  if (!r) throw new Error(`Yahoo ${symbol} 回應找不到chart.result`);
+  const closes = (r.indicators?.quote?.[0]?.close || []).filter(v => v != null);
+  const last = closes[closes.length - 1];
+  if (last == null) throw new Error(`Yahoo ${symbol} 找不到有效收盤值`);
+  return last;
+}
 
-  const coRows = j?.bondCoCurve?.data;
-  if (!Array.isArray(coRows) || coRows.length === 0) throw new Error('TPEx bondCurve 回應格式跟預期不符（找不到 bondCoCurve.data）');
-  // 取最長天期（陣列最後一筆，通常是10年期）代表長天期信用利差，跟公債殖利率的天期對齊。
-  const longest = coRows[coRows.length - 1];
-  if (longest.twBBB == null || longest.twAAA == null) throw new Error('TPEx bondCurve 公司債利差缺少 twBBB/twAAA 欄位');
-  const spread = (longest.twBBB - longest.twAAA) * 100; // 原始是小數（如0.0069代表0.69個百分點），換算成百分點
+async function fetchUsTreasuryYield() {
+  return fetchYahooLatestClose('^TNX'); // 已經是年息百分比本身（例如4.604代表4.604%），不需要再除以10
+}
 
-  return { gov10y, spread };
+async function fetchCreditRiskAppetiteRatio() {
+  const [hyg, lqd] = await Promise.all([fetchYahooLatestClose('HYG'), fetchYahooLatestClose('LQD')]);
+  return hyg / lqd;
 }
 
 async function fetchStockDayAll() {
@@ -1194,13 +1211,21 @@ export default {
 
       (async () => {
         try {
-          const bond = await fetchBondCurve();
-          dayData.govbond_10y_yield = bond.gov10y;
-          dayData.corp_bond_spread = bond.spread;
-          await logStep(db, 'bondCurve', nowHHMM, null);
+          dayData.govbond_10y_yield = await fetchUsTreasuryYield();
+          await logStep(db, 'usTreasuryYield', nowHHMM, null);
         } catch (e) {
-          console.error('[cron] 取得公債殖利率/公司債信用利差失敗：', e.message);
-          await logStep(db, 'bondCurve', nowHHMM, e.message);
+          console.error('[cron] 取得美國10年期公債殖利率失敗：', e.message);
+          await logStep(db, 'usTreasuryYield', nowHHMM, e.message);
+        }
+      })(),
+
+      (async () => {
+        try {
+          dayData.corp_bond_spread = await fetchCreditRiskAppetiteRatio();
+          await logStep(db, 'creditRiskAppetiteRatio', nowHHMM, null);
+        } catch (e) {
+          console.error('[cron] 取得HYG/LQD信用風險偏好比值失敗：', e.message);
+          await logStep(db, 'creditRiskAppetiteRatio', nowHHMM, e.message);
         }
       })(),
     ]);

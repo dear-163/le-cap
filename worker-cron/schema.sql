@@ -13,8 +13,10 @@ CREATE TABLE IF NOT EXISTS daily_market_data (
   inst_net_sell_count INTEGER,     -- 三大法人合計淨賣超家數
   put_call_ratio REAL,             -- 臺指選擇權Put/Call成交量比(%)（對應CNN「Put/Call Ratio」），來源TAIFEX
   vixtwn REAL,                     -- 臺指選擇權波動率指數收盤（對應CNN「VIX」），來源TAIFEX
-  govbond_10y_yield REAL,          -- 10年期公債殖利率(%)，5日變化率在讀取時計算（對應CNN「避險需求」），來源TPEx
-  corp_bond_spread REAL,           -- 公司債BBB-AAA信用利差(百分點)（對應CNN「垃圾債券需求」，台灣無真正垃圾債市場的替代指標），來源TPEx
+  govbond_10y_yield REAL,          -- 美國10年期公債殖利率(%)，5日變化率在讀取時計算（對應CNN「避險需求」），來源Yahoo Finance ^TNX
+                                    -- （原本查TPEx台灣公債殖利率，2026-07-21發現該端點從正式環境持續被擋，改用CNN原始方法論
+                                    -- 本來就採用的美國資料，比硬套台灣資料更貼近CNN原始定義，見worker-cron/src/index.js註解）
+  corp_bond_spread REAL,           -- 美國高收益債OAS利差(百分點)（對應CNN「垃圾債券需求」），來源FRED BAMLH0A0HYM2
   updated_at TEXT                  -- 排程實際寫入這筆資料當下的台北時間（HH:MM），用來驗證/公開實際資料到位時間
 );
 

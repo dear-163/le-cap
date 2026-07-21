@@ -73,8 +73,11 @@ function putCallSeries(rows) {
 function vixTwnSeries(rows) {
   return computeSeries(rows, (rows, i) => rows[i].vixtwn);
 }
-// 避險需求：10年期公債殖利率的近5日變化——殖利率上升代表資金從公債流出（追逐風險資產）＝越貪婪，
-// 殖利率下降代表資金湧入公債避險＝越恐懼。用變化量而非絕對水準，比較貼近CNN原始定義的「股債報酬差」精神。
+// 避險需求：美國10年期公債殖利率的近5日變化——殖利率上升代表資金從公債流出（追逐風險資產）＝
+// 越貪婪，殖利率下降代表資金湧入公債避險＝越恐懼。用變化量而非絕對水準，比較貼近CNN原始定義
+// 的「股債報酬差」精神。原本查台灣TPEx公債殖利率，2026-07-21發現該來源從正式環境持續被擋，
+// 改用CNN原始方法論本來就採用的美國資料（Yahoo Finance ^TNX），見worker-cron/src/index.js
+// 對應的fetchUsTreasuryYield()註解。
 function govBondYieldChangeSeries(rows) {
   return computeSeries(rows, (rows, i) => {
     if (i < 5) return null;
@@ -84,8 +87,14 @@ function govBondYieldChangeSeries(rows) {
     return today - prev;
   });
 }
-// 垃圾債券需求的台股替代：公司債BBB-AAA信用利差（百分點）。利差越窄代表投資人越願意承擔信用風險
-// 換取較低評等公司債的較高收益＝越貪婪；利差越寬代表資金往安全等級靠攏＝越恐懼。
+// 垃圾債券需求：HYG(高收益債ETF)/LQD(投資等級公司債ETF)的Yahoo Finance價格比值——CNN原始
+// 方法論這項用的是真正的OAS利差數值，本來想用FRED的BAMLH0A0HYM2，但實測發現那個端點掛在
+// Akamai Bot Manager後面，連本機workerd測試都會直接卡住不回應（比「只有正式環境失敗」還更
+// 差一個等級，risk太高），改用ETF價格比值當代理指標：比值越高代表投資人越願意持有較高風險
+// 的高收益債（風險偏好=貪婪），比值下降代表資金轉往較安全的投資等級債券（避險=恐懼），方向
+// 跟真正的OAS利差一致（利差收窄時高收益債通常表現優於投資等級債，比值同步上升）——注意這是
+// 「比值越高＝越貪婪」，跟原本「利差越窄（數值越小）＝越貪婪」方向相反，所以invert要設false
+// 不是true。這不是真正的利差數值，是代理指標，label要誠實標示。
 function corpSpreadSeries(rows) {
   return computeSeries(rows, (rows, i) => rows[i].corp_bond_spread);
 }
@@ -94,20 +103,17 @@ function corpSpreadSeries(rows) {
 //   ratio          — 0~1 的比例，前端要 ×100 顯示成 %（舊3個因子都是這個格式）
 //   percent        — 原始值本身已經是百分比數字（如 100.89 代表 100.89%），前端直接顯示、不再 ×100
 //   index          — 純數值指數（如VIXTWN的37.11），沒有%意義
-//   percent_points — 百分點差值（如殖利率變化、信用利差），顯示成「±X.XX 個百分點」
+//   percent_points — 百分點差值（如殖利率變化），顯示成「±X.XX 個百分點」
+//   raw_ratio      — 純數值比值（如HYG/LQD價格比0.745），不是百分比，前端直接顯示小數
 const INDICATORS = [
   { key: 'indexMomentum', label: '股價動能（加權指數乖離率）', seriesFn: indexMomentumSeries, direction: '乖離越正 → 越貪婪', source: 'TWSE 加權指數收盤', invert: false, format: 'ratio' },
   { key: 'advanceDecline', label: '股價廣度（漲跌家數比）', seriesFn: advanceDeclineSeries, direction: '比例越高 → 越貪婪', source: 'TWSE 每日漲跌家數統計', invert: false, format: 'ratio' },
   { key: 'newHighLow', label: '股價強度（創新高低家數比）', seriesFn: newHighLowSeries, direction: '比例越高 → 越貪婪', source: 'TWSE 全市場個股日成交（自行累積52週高低）', invert: false, format: 'ratio' },
   { key: 'putCallRatio', label: 'Put/Call比（臺指選擇權）', seriesFn: putCallSeries, direction: '比例越高 → 越恐懼', source: 'TAIFEX 臺指選擇權Put/Call比', invert: true, format: 'percent' },
   { key: 'vixTwn', label: '波動率（VIXTWN）', seriesFn: vixTwnSeries, direction: '數值越高 → 越恐懼', source: 'TAIFEX 臺指選擇權波動率指數', invert: true, format: 'index' },
-  // 這兩個指標的資料源（TPEx bondCurve.json）從正式環境的Cloudflare Worker呼叫持續失敗
-  // （「Too many redirects」導到tpex.org.tw/errors），但用完全相同的程式碼跟headers從本機
-  // 直接curl或跑本機workerd都100%成功——研判是TPEx對Cloudflare共用邊緣IP的存取限制，
-  // 跟本session稍早確認過的TWSE MIS/SEC EDGAR同一類問題，程式碼層面無法修復。knownIssueNote
-  // 會在historyLength===0時顯示給使用者，說明這不是「還沒開始累積」，是持續被擋。
-  { key: 'govBondYieldChange', label: '避險需求（10年公債殖利率變化）', seriesFn: govBondYieldChangeSeries, direction: '殖利率上升 → 越貪婪（資金流出債市）', source: 'TPEx 公債殖利率曲線', invert: false, format: 'percent_points', knownIssueNote: '資料來源目前持續無法取得（TPEx對雲端平台共用IP的存取限制，並非本站故障，之後可能自行恢復）' },
-  { key: 'corpBondSpread', label: '信用利差（公司債BBB-AAA，垃圾債替代指標）', seriesFn: corpSpreadSeries, direction: '利差越窄 → 越貪婪', source: 'TPEx 公司債殖利率曲線', invert: true, format: 'percent_points', knownIssueNote: '資料來源目前持續無法取得（TPEx對雲端平台共用IP的存取限制，並非本站故障，之後可能自行恢復）' },
+  // 這兩項改用美國資料（見上面govBondYieldChangeSeries/corpSpreadSeries的註解說明原因）。
+  { key: 'govBondYieldChange', label: '避險需求（美國10年公債殖利率變化）', seriesFn: govBondYieldChangeSeries, direction: '殖利率上升 → 越貪婪（資金流出債市）', source: 'Yahoo Finance ^TNX（CBOE 10年期公債殖利率指數）', invert: false, format: 'percent_points' },
+  { key: 'corpBondSpread', label: '信用風險偏好（HYG/LQD價格比值，代理指標）', seriesFn: corpSpreadSeries, direction: '比值越高 → 越貪婪', source: 'Yahoo Finance HYG÷LQD（非真正利差數值，見程式碼註解）', invert: false, format: 'raw_ratio' },
 ];
 
 function levelOf(score) {

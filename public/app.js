@@ -1428,6 +1428,7 @@ function formatSentimentRawValue(v,format){
     case 'percent': return v.toFixed(2)+'%';
     case 'index': return v.toFixed(2);
     case 'percent_points': return (v>=0?'+':'')+v.toFixed(3)+' 個百分點';
+    case 'raw_ratio': return v.toFixed(4);
     default: return String(v);
   }
 }
