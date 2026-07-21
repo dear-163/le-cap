@@ -1447,6 +1447,7 @@ function renderSentiment(data){
       <div class="ind-row"><span class="ind-name">原始值</span><span class="ind-val">${rawText}</span></div>
       <div class="ind-row"><span class="ind-name">資料成熟度</span><span class="ind-val">${ind.maturity}</span></div>
       <div class="src-note">來源：${ind.source}｜${ind.direction||''}${ind.date?'｜'+ind.date:''}</div>
+      ${ind.note?`<div class="src-note" style="color:var(--amber);">⚠ ${escapeHtml(ind.note)}</div>`:''}
     </div>`;
   }).join('');
   const updatedNote=data.latestDate?`資料日期：${data.latestDate}${data.latestUpdatedAt?`（台北時間 ${data.latestUpdatedAt} 更新）`:''}`:'';

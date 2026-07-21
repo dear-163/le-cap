@@ -130,15 +130,20 @@ async function fetchInstitutionalCounts(adDate, retries = 3) {
 }
 
 // 台指選擇權 Put/Call 成交量比（%）——CNN Fear & Greed 7 因子之一，官方 TAIFEX OpenAPI，
-// 不用 cookie/登入。回應依日期新到舊排序，取第一筆即為最新一個交易日。
-async function fetchPutCallRatio() {
+// 不用 cookie/登入。回應依日期新到舊排序——這支端點每次呼叫其實會回傳「近20個交易日」，
+// 不是只有最新一天，之前的寫法只取第一筆、把其餘19天直接丟掉，導致這個指標要等整整
+// 60個交易日（約3個月）才會累積到情緒指數MIN_HISTORY門檻。回傳完整陣列讓呼叫端把其餘
+// 19天也回補進D1既有的列，一次呼叫就能拿到20天份，加速情緒指數這個子指標成熟。
+async function fetchPutCallRatioHistory() {
   const res = await fetch('https://openapi.taifex.com.tw/v1/PutCallRatio', { headers: BROWSER_HEADERS });
   if (!res.ok) throw new Error(`TAIFEX PutCallRatio HTTP ${res.status}`);
   const arr = await res.json();
   if (!Array.isArray(arr) || arr.length === 0) throw new Error('TAIFEX PutCallRatio 回應不是陣列或是空的');
-  const ratio = parseNum(arr[0]['PutCallVolumeRatio%']);
-  if (ratio == null) throw new Error('TAIFEX PutCallRatio 缺少 PutCallVolumeRatio% 欄位');
-  return ratio;
+  const history = arr
+    .map(r => ({ date: r.Date, ratio: parseNum(r['PutCallVolumeRatio%']) }))
+    .filter(r => r.date && r.ratio != null);
+  if (history.length === 0) throw new Error('TAIFEX PutCallRatio 缺少 PutCallVolumeRatio% 欄位');
+  return history; // 新到舊排序
 }
 
 // 臺指選擇權波動率指數（VIXTWN，台版VIX）——CNN 7 因子之一。TAIFEX 只提供「當天這個檔案」的
@@ -1160,7 +1165,16 @@ export default {
 
       (async () => {
         try {
-          dayData.put_call_ratio = await fetchPutCallRatio();
+          const history = await fetchPutCallRatioHistory();
+          const todayRow = history.find(h => h.date === todayAd);
+          dayData.put_call_ratio = todayRow ? todayRow.ratio : null;
+          // 回補其餘19天到daily_market_data既有的列——用UPDATE+IS NULL防呆，只補真的
+          // 缺漏的欄位，不會覆蓋掉已經有值的資料，也不會對還沒有那天其他欄位資料的日期
+          // 硬塞一列只有put_call_ratio的殘缺資料。
+          const backfillStatements = history
+            .filter(h => h.date !== todayAd)
+            .map(h => db.prepare('UPDATE daily_market_data SET put_call_ratio = ? WHERE date = ? AND put_call_ratio IS NULL').bind(h.ratio, h.date));
+          if (backfillStatements.length) await batchRun(db, backfillStatements);
           await logStep(db, 'putCallRatio', nowHHMM, null);
         } catch (e) {
           console.error('[cron] 取得臺指選擇權Put/Call比失敗：', e.message);

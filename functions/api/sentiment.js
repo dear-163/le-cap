@@ -101,8 +101,13 @@ const INDICATORS = [
   { key: 'newHighLow', label: '股價強度（創新高低家數比）', seriesFn: newHighLowSeries, direction: '比例越高 → 越貪婪', source: 'TWSE 全市場個股日成交（自行累積52週高低）', invert: false, format: 'ratio' },
   { key: 'putCallRatio', label: 'Put/Call比（臺指選擇權）', seriesFn: putCallSeries, direction: '比例越高 → 越恐懼', source: 'TAIFEX 臺指選擇權Put/Call比', invert: true, format: 'percent' },
   { key: 'vixTwn', label: '波動率（VIXTWN）', seriesFn: vixTwnSeries, direction: '數值越高 → 越恐懼', source: 'TAIFEX 臺指選擇權波動率指數', invert: true, format: 'index' },
-  { key: 'govBondYieldChange', label: '避險需求（10年公債殖利率變化）', seriesFn: govBondYieldChangeSeries, direction: '殖利率上升 → 越貪婪（資金流出債市）', source: 'TPEx 公債殖利率曲線', invert: false, format: 'percent_points' },
-  { key: 'corpBondSpread', label: '信用利差（公司債BBB-AAA，垃圾債替代指標）', seriesFn: corpSpreadSeries, direction: '利差越窄 → 越貪婪', source: 'TPEx 公司債殖利率曲線', invert: true, format: 'percent_points' },
+  // 這兩個指標的資料源（TPEx bondCurve.json）從正式環境的Cloudflare Worker呼叫持續失敗
+  // （「Too many redirects」導到tpex.org.tw/errors），但用完全相同的程式碼跟headers從本機
+  // 直接curl或跑本機workerd都100%成功——研判是TPEx對Cloudflare共用邊緣IP的存取限制，
+  // 跟本session稍早確認過的TWSE MIS/SEC EDGAR同一類問題，程式碼層面無法修復。knownIssueNote
+  // 會在historyLength===0時顯示給使用者，說明這不是「還沒開始累積」，是持續被擋。
+  { key: 'govBondYieldChange', label: '避險需求（10年公債殖利率變化）', seriesFn: govBondYieldChangeSeries, direction: '殖利率上升 → 越貪婪（資金流出債市）', source: 'TPEx 公債殖利率曲線', invert: false, format: 'percent_points', knownIssueNote: '資料來源目前持續無法取得（TPEx對雲端平台共用IP的存取限制，並非本站故障，之後可能自行恢復）' },
+  { key: 'corpBondSpread', label: '信用利差（公司債BBB-AAA，垃圾債替代指標）', seriesFn: corpSpreadSeries, direction: '利差越窄 → 越貪婪', source: 'TPEx 公司債殖利率曲線', invert: true, format: 'percent_points', knownIssueNote: '資料來源目前持續無法取得（TPEx對雲端平台共用IP的存取限制，並非本站故障，之後可能自行恢復）' },
 ];
 
 function levelOf(score) {
@@ -168,7 +173,7 @@ export async function onRequestGet(context) {
       const historyLength = series.length;
       const base = { key: ind.key, label: ind.label, source: ind.source, direction: ind.direction, format: ind.format, maturity: `${historyLength}/${MATURE_HISTORY}` };
       if (historyLength === 0) {
-        return { ...base, status: 'no_data' };
+        return { ...base, status: 'no_data', note: ind.knownIssueNote };
       }
       const latest = series[series.length - 1];
       if (historyLength < MIN_HISTORY) {
