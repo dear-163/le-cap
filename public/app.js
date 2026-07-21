@@ -1809,6 +1809,28 @@ async function loadMarginRatio() {
     document.getElementById('marginRatioValue').textContent = data.ratio.toFixed(2) + '%';
     document.getElementById('marginRatioDate').innerHTML = staleNoteHtml(data.date, data.stale);
     document.getElementById('marginRatioCard').style.display = 'block';
+
+    // 過去幾天的比較列：跟前一天比的漲跌箭頭，單一數字看不出散戶槓桿熱度是持續升溫還是降溫。
+    // history不足2筆（例如遇到連假只抓到1天）就不顯示比較列，只顯示今天的數字。
+    const histEl = document.getElementById('marginRatioHistory');
+    if (histEl) {
+      const history = Array.isArray(data.history) ? data.history : [];
+      if (history.length < 2) {
+        histEl.innerHTML = '';
+      } else {
+        histEl.innerHTML = history.map((h, i) => {
+          const prev = i > 0 ? history[i - 1].ratio : null;
+          const diff = prev != null ? h.ratio - prev : null;
+          const arrow = diff == null ? '' : diff > 0.005 ? '<span class="up">▲</span>' : diff < -0.005 ? '<span class="down">▼</span>' : '<span style="color:var(--text3);">─</span>';
+          const shortDate = (h.date || '').slice(5).replace('-', '/');
+          return `<div style="font-size:11px; color:var(--text3); display:flex; flex-direction:column; align-items:center; gap:2px; padding:4px 10px; background:var(--bg2); border-radius:6px;">
+            <span>${escapeHtml(shortDate)}</span>
+            <span style="font-size:13px; font-weight:700; color:var(--text);">${h.ratio.toFixed(2)}%</span>
+            ${arrow}
+          </div>`;
+        }).join('');
+      }
+    }
   } catch (e) {
     console.error('Failed to load margin ratio:', e);
   }

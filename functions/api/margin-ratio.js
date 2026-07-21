@@ -29,62 +29,81 @@ function parseNum(v) {
   return isFinite(n) ? n : null;
 }
 
-async function fetchLatestMarginTrading() {
+async function fetchMarginTradingForDate(adDate) {
+  const url = `https://www.twse.com.tw/rwd/zh/marginTrading/MI_MARGN?response=json&date=${adDate}&selectType=ALL`;
+  const res = await fetch(url, { headers: BROWSER_HEADERS });
+  if (!res.ok) return null;
+  const body = await res.json().catch(() => null);
+  if (body && body.stat === 'OK' && Array.isArray(body.tables) && body.tables.length >= 2) {
+    return body;
+  }
+  return null;
+}
+
+function computeUsageRatio(body) {
+  const detailTable = body.tables[1];
+  const rows = detailTable.data || [];
+  let totalBalance = 0, totalLimit = 0, matchedStocks = 0;
+  for (const row of rows) {
+    const code = (row[0] || '').trim();
+    const balanceLots = parseNum(row[6]); // 融資今日餘額，單位「張」
+    const limitLots = parseNum(row[7]); // 次一營業日限額，單位「張」
+    if (!code || balanceLots == null || limitLots == null || limitLots <= 0) continue;
+    totalBalance += balanceLots;
+    totalLimit += limitLots;
+    matchedStocks++;
+  }
+  if (matchedStocks === 0 || totalLimit === 0) return null;
+  return {
+    ratio: Math.round((totalBalance / totalLimit) * 100 * 100) / 100,
+    totalBalance,
+    totalLimit,
+    matchedStocks,
+  };
+}
+
+// TWSE這個端點本身就支援指定歷史日期查詢（date=YYYYMMDD），不需要另外存D1累積歷史——
+// 跟原本「只抓最新一天，往回找到有效資料為止」是同一種寫法，差別只在於找滿N天才停，不是
+// 找到1天就停。掃描上限抓寬一點（連假很少連續超過一週）。
+const HISTORY_DAYS = 3;
+const MAX_SCAN_ATTEMPTS = 20;
+
+async function fetchRecentMarginTradingDays(n) {
   const cursor = new Date();
-  for (let attempts = 0; attempts < 10; attempts++) {
+  const results = [];
+  for (let attempts = 0; attempts < MAX_SCAN_ATTEMPTS && results.length < n; attempts++) {
     const dow = cursor.getUTCDay();
     if (dow === 0 || dow === 6) { cursor.setUTCDate(cursor.getUTCDate() - 1); continue; }
     const adDate = toAdDate(cursor);
-    const url = `https://www.twse.com.tw/rwd/zh/marginTrading/MI_MARGN?response=json&date=${adDate}&selectType=ALL`;
-    const res = await fetch(url, { headers: BROWSER_HEADERS });
-    if (res.ok) {
-      const body = await res.json().catch(() => null);
-      if (body && body.stat === 'OK' && Array.isArray(body.tables) && body.tables.length >= 2) {
-        return { body, adDate };
-      }
+    const body = await fetchMarginTradingForDate(adDate);
+    if (body) {
+      const usage = computeUsageRatio(body);
+      if (usage) results.push({ date: isoFromAd(body.date || adDate), ...usage });
     }
     cursor.setUTCDate(cursor.getUTCDate() - 1);
   }
-  return null;
+  return results; // 新到舊排序
 }
 
 export async function onRequestGet(context) {
   const { env } = context;
 
   try {
-    const found = await fetchLatestMarginTrading();
-    if (!found) {
+    const days = await fetchRecentMarginTradingDays(HISTORY_DAYS);
+    if (days.length === 0) {
       return json({ error: '近期交易日的 TWSE 信用交易統計（融資融券餘額）皆無法取得有效資料，請稍後再試' }, 502);
     }
-    const { body, adDate } = found;
 
-    const detailTable = body.tables[1];
-    const rows = detailTable.data || [];
-
-    let totalBalance = 0, totalLimit = 0, matchedStocks = 0;
-    for (const row of rows) {
-      const code = (row[0] || '').trim();
-      const balanceLots = parseNum(row[6]); // 融資今日餘額，單位「張」
-      const limitLots = parseNum(row[7]); // 次一營業日限額，單位「張」
-      if (!code || balanceLots == null || limitLots == null || limitLots <= 0) continue;
-      totalBalance += balanceLots;
-      totalLimit += limitLots;
-      matchedStocks++;
-    }
-
-    if (matchedStocks === 0 || totalLimit === 0) {
-      return json({ error: 'TWSE 信用交易統計個股明細找不到任何有效的融資餘額/限額資料' }, 502);
-    }
-
-    const usageRatio = (totalBalance / totalLimit) * 100;
-
+    const latest = days[0];
     const result = {
-      date: isoFromAd(body.date || adDate),
+      date: latest.date,
       source: 'TWSE 信用交易統計（融資融券餘額，個股明細加總）',
-      ratio: Math.round(usageRatio * 100) / 100,
-      totalBalance,
-      totalLimit,
-      matchedStocks,
+      ratio: latest.ratio,
+      totalBalance: latest.totalBalance,
+      totalLimit: latest.totalLimit,
+      matchedStocks: latest.matchedStocks,
+      // 舊到新排序，方便前端直接畫成由左到右的比較列
+      history: days.slice().reverse().map(d => ({ date: d.date, ratio: d.ratio })),
     };
     context.waitUntil(saveSnapshot(env, 'margin-ratio', result));
     return json(result);
