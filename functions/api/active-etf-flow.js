@@ -58,7 +58,10 @@ export async function onRequestGet(context) {
       .all();
 
     if (!dateRows.results || dateRows.results.length === 0) {
-      return json({ date: null, flow: [], rankings: { buys: [], sells: [] } });
+      // 丟例外而不是直接return——不然如果這是D1暫時性問題（例如複寫延遲）造成查詢
+      // 意外回空，會直接跳過下面catch區塊的KV快照回退，明明有好的快照可以退卻顯示空排行。
+      // 跟market-flow.js/margin-ratio.js是同一類bug，這裡表現成「空但200」不是顯式錯誤而已。
+      throw new Error('active_etf_holdings 目前沒有任何資料');
     }
 
     const todayDate = dateRows.results[0].date;

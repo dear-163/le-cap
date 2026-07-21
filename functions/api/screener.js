@@ -26,6 +26,11 @@ export async function onRequestGet(context) {
     const latestDate = dateRow?.date || null;
 
     if (!latestDate) {
+      // 這裡查到latestDate為null有兩種可能：真的還沒開始累積資料（一開始就沒有快照，
+      // fallback會是null，走下面「資料累積中」訊息），或D1這次查詢剛好暫時性失敗但表
+      // 其實已經有資料（有快照可退，不該顯示誤導的「累積中」訊息蓋掉本來已經成熟的結果）。
+      const fallback = await loadSnapshotFallback(env, 'screener');
+      if (fallback) return json(fallback);
       const response = json({
         date: null,
         oversold: [],

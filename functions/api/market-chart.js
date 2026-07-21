@@ -48,32 +48,40 @@ async function fetchTwseIndexOnce(exCh) {
 }
 
 async function fetchTwseIndex(exCh) {
+  let lastError = null;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const result = await fetchTwseIndexOnce(exCh);
       if (result) return result;
-    } catch {}
+    } catch (e) {
+      lastError = e.message;
+    }
   }
+  // 這個端點沒有D1/KV快照機制（設計上就是要真即時），失敗時前端會自己沿用上次的值
+  // （見app.js的lastGoodMarketData），但伺服器這端完全沒有log的話，事後根本查不出
+  // 「剛剛那段時間到底是TWSE掛了還是我們自己的問題」——至少留一行log當診斷起點。
+  console.error(`[market-chart] TWSE MIS 三次嘗試皆失敗（${exCh}）：${lastError || 'msgArray為空'}`);
   return null;
 }
 
 // Yahoo Finance chart API for indices (^GSPC, ^IXIC, ^SOX, etc.)
 async function fetchYahooIndexLive(yahooSymbol) {
+  let lastError = null;
   for (const host of ['query1.finance.yahoo.com', 'query2.finance.yahoo.com']) {
     try {
       const url = `https://${host}/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?range=2d&interval=1d&events=div&includePrePost=false`;
       const res = await fetch(url, {
         headers: { 'User-Agent': BROWSER_UA, 'Accept': 'application/json' },
       });
-      if (!res.ok) continue;
+      if (!res.ok) { lastError = `HTTP ${res.status}`; continue; }
       const j = await res.json();
       const r = j?.chart?.result?.[0];
-      if (!r) continue;
+      if (!r) { lastError = 'chart.result為空'; continue; }
       const meta = r.meta || {};
       const closes = r.indicators?.quote?.[0]?.close || [];
       const prev = closes.length >= 2 ? closes[closes.length - 2] : (meta.chartPreviousClose || meta.previousClose);
       const current = meta.regularMarketPrice || closes[closes.length - 1];
-      if (!current) continue;
+      if (!current) { lastError = '無regularMarketPrice/close'; continue; }
       const change = current - prev;
       const changePct = prev > 0 ? (change / prev * 100) : null;
       return {
@@ -88,8 +96,11 @@ async function fetchYahooIndexLive(yahooSymbol) {
         time: null,
         date: null,
       };
-    } catch {}
+    } catch (e) {
+      lastError = e.message;
+    }
   }
+  console.error(`[market-chart] Yahoo指數即時報價兩個host皆失敗（${yahooSymbol}）：${lastError || '未知原因'}`);
   return null;
 }
 

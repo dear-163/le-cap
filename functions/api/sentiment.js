@@ -134,75 +134,83 @@ export async function onRequestGet(context) {
   const cached = await cache.match(cacheKey);
   if (cached) return cached;
 
-  let rows;
+  // 原本只有D1查詢那一步包在try/catch裡，下面的指標計算/百分位/回應組裝完全沒有保護——
+  // 任何一個環節丟例外就是未處理的worker錯誤（連json({error...})這層包裝都沒有，更別說
+  // KV快照回退），比同類型bug（market-flow.js/margin-ratio.js的「return繞過catch」）還嚴重。
+  // 整段都包進同一個try，任何失敗都能退回快照。
   try {
     const result = await env.ELAN_QUANT_DB
       .prepare('SELECT date, taiex_close, advancers, decliners, new_highs, new_lows, put_call_ratio, vixtwn, govbond_10y_yield, corp_bond_spread, updated_at FROM daily_market_data ORDER BY date ASC')
       .all();
-    rows = result.results || [];
+    const rows = result.results || [];
+
+    if (rows.length === 0) {
+      // rows為空有兩種可能：真的還沒開始累積（沒有快照，fallback為null，走下面「累積中」
+      // 訊息），或這次D1查詢剛好暫時性失敗但實際上已經有歷史資料——有快照可退時不該顯示
+      // 誤導的「累積中」訊息蓋掉本來已經成熟的情緒指數。
+      const fallback = await loadSnapshotFallback(env, 'sentiment');
+      if (fallback) return json(fallback);
+      const response = json({
+        indicators: [],
+        readyCount: 0,
+        totalIndicators: INDICATORS.length,
+        greedIndex: null,
+        maturityMessage: `資料累積中，0/${INDICATORS.length} 項可用（尚無任何歷史資料，請確認每日排程 Worker 已部署並執行過）。`,
+      }, 200, { 'Cache-Control': 'public, max-age=600' });
+      context.waitUntil(cache.put(cacheKey, response.clone()));
+      return response;
+    }
+
+    const indicators = INDICATORS.map(ind => {
+      // Cap to the most recent MATURE_HISTORY days — a rolling window, not all-time-since-launch —
+      // so scores stay relative to roughly "the past year" instead of drifting as more history piles up.
+      const series = ind.seriesFn(rows).slice(-MATURE_HISTORY);
+      const historyLength = series.length;
+      const base = { key: ind.key, label: ind.label, source: ind.source, direction: ind.direction, format: ind.format, maturity: `${historyLength}/${MATURE_HISTORY}` };
+      if (historyLength === 0) {
+        return { ...base, status: 'no_data' };
+      }
+      const latest = series[series.length - 1];
+      if (historyLength < MIN_HISTORY) {
+        return { ...base, status: 'accumulating', rawValue: latest.value, date: latest.date, historyLength };
+      }
+      return {
+        ...base,
+        status: 'ready',
+        rawValue: latest.value,
+        percentileScore: percentileScore(series, ind.invert),
+        date: latest.date,
+        historyLength,
+      };
+    });
+
+    const ready = indicators.filter(r => r.status === 'ready');
+    let greedIndex = null, level = null, maturityMessage = null;
+    if (ready.length >= 3) {
+      greedIndex = ready.reduce((s, r) => s + r.percentileScore, 0) / ready.length;
+      level = levelOf(greedIndex);
+    } else {
+      maturityMessage = `資料累積中，${ready.length}/${INDICATORS.length} 項指標可用（需要至少 3 項才能顯示總分）。`;
+    }
+
+    const payload = {
+      indicators,
+      readyCount: ready.length,
+      totalIndicators: INDICATORS.length,
+      greedIndex,
+      level,
+      maturityMessage,
+      methodology: '等權重 + 歷史百分位標準化（近252個交易日），方法論參考 CNN Fear & Greed Index，非官方標準，僅供參考。',
+      latestDate: rows[rows.length - 1].date,
+      latestUpdatedAt: rows[rows.length - 1].updated_at || null,
+    };
+    context.waitUntil(saveSnapshot(env, 'sentiment', payload));
+    const response = json(payload, 200, { 'Cache-Control': 'public, max-age=600' });
+    context.waitUntil(cache.put(cacheKey, response.clone()));
+    return response;
   } catch (e) {
     const fallback = await loadSnapshotFallback(env, 'sentiment');
     if (fallback) return json(fallback);
-    return json({ error: `查詢 D1 daily_market_data 失敗：${e.message}` }, 500);
+    return json({ error: `查詢/計算市場情緒指數失敗：${e.message}` }, 500);
   }
-
-  if (rows.length === 0) {
-    const response = json({
-      indicators: [],
-      readyCount: 0,
-      totalIndicators: INDICATORS.length,
-      greedIndex: null,
-      maturityMessage: `資料累積中，0/${INDICATORS.length} 項可用（尚無任何歷史資料，請確認每日排程 Worker 已部署並執行過）。`,
-    }, 200, { 'Cache-Control': 'public, max-age=600' });
-    context.waitUntil(cache.put(cacheKey, response.clone()));
-    return response;
-  }
-
-  const indicators = INDICATORS.map(ind => {
-    // Cap to the most recent MATURE_HISTORY days — a rolling window, not all-time-since-launch —
-    // so scores stay relative to roughly "the past year" instead of drifting as more history piles up.
-    const series = ind.seriesFn(rows).slice(-MATURE_HISTORY);
-    const historyLength = series.length;
-    const base = { key: ind.key, label: ind.label, source: ind.source, direction: ind.direction, format: ind.format, maturity: `${historyLength}/${MATURE_HISTORY}` };
-    if (historyLength === 0) {
-      return { ...base, status: 'no_data' };
-    }
-    const latest = series[series.length - 1];
-    if (historyLength < MIN_HISTORY) {
-      return { ...base, status: 'accumulating', rawValue: latest.value, date: latest.date, historyLength };
-    }
-    return {
-      ...base,
-      status: 'ready',
-      rawValue: latest.value,
-      percentileScore: percentileScore(series, ind.invert),
-      date: latest.date,
-      historyLength,
-    };
-  });
-
-  const ready = indicators.filter(r => r.status === 'ready');
-  let greedIndex = null, level = null, maturityMessage = null;
-  if (ready.length >= 3) {
-    greedIndex = ready.reduce((s, r) => s + r.percentileScore, 0) / ready.length;
-    level = levelOf(greedIndex);
-  } else {
-    maturityMessage = `資料累積中，${ready.length}/${INDICATORS.length} 項指標可用（需要至少 3 項才能顯示總分）。`;
-  }
-
-  const payload = {
-    indicators,
-    readyCount: ready.length,
-    totalIndicators: INDICATORS.length,
-    greedIndex,
-    level,
-    maturityMessage,
-    methodology: '等權重 + 歷史百分位標準化（近252個交易日），方法論參考 CNN Fear & Greed Index，非官方標準，僅供參考。',
-    latestDate: rows[rows.length - 1].date,
-    latestUpdatedAt: rows[rows.length - 1].updated_at || null,
-  };
-  context.waitUntil(saveSnapshot(env, 'sentiment', payload));
-  const response = json(payload, 200, { 'Cache-Control': 'public, max-age=600' });
-  context.waitUntil(cache.put(cacheKey, response.clone()));
-  return response;
 }

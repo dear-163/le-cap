@@ -1649,7 +1649,7 @@ function copyTechConclusion(){
 function downloadReport(){
   const main=document.getElementById('mainReport');
   if(!main||!currentSymbol){ alert('請先完成分析後再下載'); return; }
-  const html='<!doctype html><html><head><meta charset="utf-8"><title>le cap 報告 - '+currentSymbol+'</title></head><body style="background:#0f0f14;color:#e8e8f0;font-family:Arial,Helvetica,sans-serif;padding:20px">'+main.innerHTML+'</body></html>';
+  const html='<!doctype html><html><head><meta charset="utf-8"><title>le cap 報告 - '+escapeHtml(currentSymbol)+'</title></head><body style="background:#0f0f14;color:#e8e8f0;font-family:Arial,Helvetica,sans-serif;padding:20px">'+main.innerHTML+'</body></html>';
   const blob=new Blob([html],{type:'text/html'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
