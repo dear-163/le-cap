@@ -9,8 +9,8 @@ const BROWSER_HEADERS = {
   'Referer': 'https://www.tpex.org.tw/',
 };
 
-function json(obj, status = 200) {
-  return new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+function json(obj, status = 200, extraHeaders = {}) {
+  return new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...extraHeaders } });
 }
 
 function toAdDate(d) {
@@ -59,6 +59,14 @@ export async function onRequestGet(context) {
   if (!env.ELAN_QUANT_DB) {
     return json({ error: 'D1 database binding (ELAN_QUANT_DB) not found.' }, 500);
   }
+
+  // 這份資料一天最多變一次，先前用no-store代表首頁每次載入都重新對TWSE T86發起最多10次
+  // 嘗試的日期往回掃描——改成跟sentiment.js/screener.js同樣做法：固定cacheKey（不理會
+  // 前端?t=帶的隨機字串），縮短重複請求量。
+  const cache = caches.default;
+  const cacheKey = new Request('https://elan-quant-cache.internal/market-flow', { method: 'GET' });
+  const cached = await cache.match(cacheKey);
+  if (cached) return cached;
 
   try {
     const found = await fetchLatestT86All();
@@ -114,7 +122,9 @@ export async function onRequestGet(context) {
       sells,
     };
     context.waitUntil(saveSnapshot(env, 'market-flow', result));
-    return json(result);
+    const response = json(result, 200, { 'Cache-Control': 'public, max-age=600' });
+    context.waitUntil(cache.put(cacheKey, response.clone()));
+    return response;
   } catch (error) {
     const fallback = await loadSnapshotFallback(env, 'market-flow');
     if (fallback) return json(fallback);

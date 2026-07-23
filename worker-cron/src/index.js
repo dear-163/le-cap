@@ -1063,25 +1063,46 @@ async function recordEtfSignalsAndEvaluateOutcomes(db, todayDash) {
   if (pending && pending.length) {
     const { results: allDates } = await db.prepare('SELECT DISTINCT date FROM stock_daily_price ORDER BY date DESC LIMIT 60').all();
     const distinctDatesDesc = (allDates || []).map(r => r.date);
-    const evalStatements = [];
+
+    // 第一輪只算出每個待評估訊號的outcomeDateAd，不查價格——先分組，同一個outcomeDateAd
+    // 通常會有好幾筆訊號共用（同一天記錄的10筆買超/賣超訊號，5個交易日後全部同一天評估），
+    // 原本寫法是每筆訊號各自查一次SELECT...WHERE code=? AND date=?（N次來回），改成每個
+    // 「不重複的outcomeDateAd」只查一次SELECT...WHERE date=?（拿到當天全部股票的收盤價），
+    // 用db.batch()一次送出，把N次來回壓成1次。
+    const eligible = [];
+    const outcomeDatesNeeded = new Set();
     for (const sig of pending) {
       const signalAd = adFromDash(sig.signal_date);
       const idx = distinctDatesDesc.indexOf(signalAd);
       if (idx === -1 || idx < ETF_SIGNAL_FORWARD_TRADING_DAYS) continue; // 還沒過5個交易日，或訊號太久遠不在60天視窗內
       const outcomeDateAd = distinctDatesDesc[idx - ETF_SIGNAL_FORWARD_TRADING_DAYS];
-      const priceRow = await db.prepare('SELECT close FROM stock_daily_price WHERE code = ? AND date = ?').bind(sig.stock_code, outcomeDateAd).first();
-      if (!priceRow || priceRow.close == null) continue;
-      const win = sig.action === '買超' ? (priceRow.close > sig.signal_price ? 1 : 0) : (priceRow.close < sig.signal_price ? 1 : 0);
-      // outcome_date存回跟signal_date一致的YYYY-MM-DD格式（isoFromAd是這個檔案裡沒有的
-      // 工具函式，這裡直接手刻轉換，避免額外引入依賴）。
-      const outcomeDateDash = `${outcomeDateAd.slice(0, 4)}-${outcomeDateAd.slice(4, 6)}-${outcomeDateAd.slice(6, 8)}`;
-      evalStatements.push(
-        db.prepare('UPDATE etf_signal_outcomes SET outcome_price = ?, outcome_date = ?, win = ? WHERE signal_date = ? AND stock_code = ?')
-          .bind(priceRow.close, outcomeDateDash, win, sig.signal_date, sig.stock_code)
-      );
-      evaluated++;
+      eligible.push({ sig, outcomeDateAd });
+      outcomeDatesNeeded.add(outcomeDateAd);
     }
-    if (evalStatements.length) await batchRun(db, evalStatements);
+
+    if (eligible.length) {
+      const dateList = [...outcomeDatesNeeded];
+      const priceStatements = dateList.map(d => db.prepare('SELECT code, close FROM stock_daily_price WHERE date = ?').bind(d));
+      const priceResults = await db.batch(priceStatements);
+      // priceByDate: outcomeDateAd -> Map(code -> close)
+      const priceByDate = new Map(dateList.map((d, i) => [d, new Map((priceResults[i].results || []).map(r => [r.code, r.close]))]));
+
+      const evalStatements = [];
+      for (const { sig, outcomeDateAd } of eligible) {
+        const close = priceByDate.get(outcomeDateAd)?.get(sig.stock_code);
+        if (close == null) continue;
+        const win = sig.action === '買超' ? (close > sig.signal_price ? 1 : 0) : (close < sig.signal_price ? 1 : 0);
+        // outcome_date存回跟signal_date一致的YYYY-MM-DD格式（isoFromAd是這個檔案裡沒有的
+        // 工具函式，這裡直接手刻轉換，避免額外引入依賴）。
+        const outcomeDateDash = `${outcomeDateAd.slice(0, 4)}-${outcomeDateAd.slice(4, 6)}-${outcomeDateAd.slice(6, 8)}`;
+        evalStatements.push(
+          db.prepare('UPDATE etf_signal_outcomes SET outcome_price = ?, outcome_date = ?, win = ? WHERE signal_date = ? AND stock_code = ?')
+            .bind(close, outcomeDateDash, win, sig.signal_date, sig.stock_code)
+        );
+        evaluated++;
+      }
+      if (evalStatements.length) await batchRun(db, evalStatements);
+    }
   }
 
   return { recorded, evaluated };

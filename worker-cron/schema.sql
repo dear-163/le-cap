@@ -74,6 +74,9 @@ CREATE TABLE IF NOT EXISTS active_etf_holdings (
 );
 CREATE INDEX IF NOT EXISTS idx_active_etf_holdings_stock_date ON active_etf_holdings(stock_code, date);
 CREATE INDEX IF NOT EXISTS idx_active_etf_holdings_etf_date ON active_etf_holdings(etf_code, date);
+-- 好幾處查詢單純用WHERE date = ?（不先指定stock_code/etf_code），上面兩個複合索引都用不上，
+-- 額外加一個純date索引。
+CREATE INDEX IF NOT EXISTS idx_active_etf_holdings_date ON active_etf_holdings(date);
 
 -- 只給「只揭露權重、不揭露股數」的發行公司使用（目前僅國泰投信）：存每日基金的股票資產總市值
 -- （來自其 GetETFDetailBalList 端點的「股票」分類金額），供讀取端把 weight 變化換算成估計金額。

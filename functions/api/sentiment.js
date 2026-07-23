@@ -150,10 +150,14 @@ export async function onRequestGet(context) {
   // KV快照回退），比同類型bug（market-flow.js/margin-ratio.js的「return繞過catch」）還嚴重。
   // 整段都包進同一個try，任何失敗都能退回快照。
   try {
+    // 每個子指標最多只會用到MATURE_HISTORY(252)+股價動能的125日均線緩衝，合計不會超過
+    // 376筆——原本ORDER BY date ASC沒有LIMIT會把daily_market_data整張表全撈出來，隨著
+    // 歷史累積只會越查越多筆、越查越慢，改成只抓最近400筆（留一點餘裕），DESC+LIMIT後
+    // 在JS反轉回舊到新，維持下面所有*Series函式預期的時間順序。
     const result = await env.ELAN_QUANT_DB
-      .prepare('SELECT date, taiex_close, advancers, decliners, new_highs, new_lows, put_call_ratio, vixtwn, govbond_10y_yield, corp_bond_spread, updated_at FROM daily_market_data ORDER BY date ASC')
+      .prepare('SELECT date, taiex_close, advancers, decliners, new_highs, new_lows, put_call_ratio, vixtwn, govbond_10y_yield, corp_bond_spread, updated_at FROM daily_market_data ORDER BY date DESC LIMIT 400')
       .all();
-    const rows = result.results || [];
+    const rows = (result.results || []).slice().reverse();
 
     if (rows.length === 0) {
       // rows為空有兩種可能：真的還沒開始累積（沒有快照，fallback為null，走下面「累積中」

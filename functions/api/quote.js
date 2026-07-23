@@ -65,7 +65,15 @@ export async function onRequestGet(context) {
     return json({ error: `無法取得 ${symbol} 的股價數據，請確認代號是否正確（台股請加 .TW，例如 2330.TW）` }, 502);
   }
 
-  const meta = await fetchQuoteInfo(resolvedSymbol, candles._meta || {}, env, userFmpKey);
+  // fetchQuoteInfo跟fetchTwseMisRealtimePrice互不依賴對方的結果（後者只是拿自己查到的
+  // 即時價覆蓋前者算好的meta裡的幾個欄位）——原本寫成先await完meta才開始查TWSE即時價，
+  // 是不必要的序列等待，改成平行送出兩個請求，台股/上櫃代號的查詢延遲可以省下其中一個
+  // 請求的時間。
+  const isTwseRealtimeEligible = NON_US_SUFFIX.test(resolvedSymbol) && /\.(TW|TWO)$/i.test(resolvedSymbol);
+  const [meta, live] = await Promise.all([
+    fetchQuoteInfo(resolvedSymbol, candles._meta || {}, env, userFmpKey),
+    isTwseRealtimeEligible ? fetchTwseMisRealtimePrice(resolvedSymbol) : Promise.resolve(null),
+  ]);
   meta.symbol = resolvedSymbol;
 
   // Yahoo's chart API for TWSE/TPEx symbols runs ~20 minutes behind (confirmed by comparing
@@ -75,15 +83,12 @@ export async function onRequestGet(context) {
   // overwrite the price with that instead, and surface the actual quote timestamp so the freshness is honest
   // rather than implied. Historical candles still come from Yahoo — TWSE's MIS endpoint only gives a live snapshot.
   let cacheSeconds = 45;
-  if (NON_US_SUFFIX.test(resolvedSymbol) && /\.(TW|TWO)$/i.test(resolvedSymbol)) {
-    const live = await fetchTwseMisRealtimePrice(resolvedSymbol);
-    if (live) {
-      meta.regularMarketPrice = live.price;
-      meta.quoteTime = live.time;
-      meta.quoteDate = live.date;
-      meta.quoteSource = 'TWSE 即時資訊';
-      cacheSeconds = 8;
-    }
+  if (live) {
+    meta.regularMarketPrice = live.price;
+    meta.quoteTime = live.time;
+    meta.quoteDate = live.date;
+    meta.quoteSource = 'TWSE 即時資訊';
+    cacheSeconds = 8;
   }
 
   const responseBody = {

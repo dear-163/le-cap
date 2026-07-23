@@ -1,7 +1,7 @@
 import { saveSnapshot, loadSnapshotFallback } from '../_lib/kvSnapshot.js';
 
-function json(obj, status = 200) {
-  return new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+function json(obj, status = 200, extraHeaders = {}) {
+  return new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...extraHeaders } });
 }
 
 // shares 可能是 NULL（該發行公司只揭露 weight%，見 etf_portfolio_value 的註解）。這種情況下
@@ -48,6 +48,17 @@ export async function onRequestGet(context) {
 
   if (!env.ELAN_QUANT_DB) {
     return json({ error: 'D1 database binding (ELAN_QUANT_DB) not found.' }, 500);
+  }
+
+  // 市場全體排行榜（無symbol）這份資料一天最多變一次，先前用no-store代表首頁每次載入都
+  // 重新查5次D1——改成跟sentiment.js/screener.js同樣做法：固定cacheKey（帶days，1/5/10/
+  // 20日視窗語意不同不能混用同一份快取；不理會前端?t=帶的隨機字串）。個股查詢（有symbol）
+  // 故意不快取，維持原本的即時查詢語意，跟快照回退的範圍一致。
+  const cache = caches.default;
+  const cacheKey = !symbol ? new Request(`https://elan-quant-cache.internal/active-etf-flow/${days}`, { method: 'GET' }) : null;
+  if (cacheKey) {
+    const cached = await cache.match(cacheKey);
+    if (cached) return cached;
   }
 
   try {
@@ -423,6 +434,11 @@ export async function onRequestGet(context) {
     // 掛掉時可能退回1日視窗的舊快照，兩種資料語意不同不能混用。
     const snapshotKey = `active-etf-flow:${days}`;
     if (!symbol) context.waitUntil(saveSnapshot(env, snapshotKey, marketWidePayload));
+    if (cacheKey) {
+      const response = json(marketWidePayload, 200, { 'Cache-Control': 'public, max-age=600' });
+      context.waitUntil(cache.put(cacheKey, response.clone()));
+      return response;
+    }
     return json(marketWidePayload);
 
   } catch (error) {
