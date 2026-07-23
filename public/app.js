@@ -1826,14 +1826,24 @@ async function loadMarginRatio() {
     document.getElementById('marginRatioDate').innerHTML = staleNoteHtml(data.date, data.stale);
     document.getElementById('marginRatioCard').style.display = 'block';
 
-    // %數字跟百分位都是「相對」量尺，使用者反應還是不知道「現在到底有多少融資量」這個
-    // 絕對數字——totalBalance其實API本來就有回傳（TWSE官方單位就是「張」，即1000股），
-    // 只是前端一直沒有顯示出來。故意不換算成「億元」金額：那需要逐檔股價相乘加總，這支
-    // 端點沒有查股價（設計上刻意不依賴D1/股價，見檔案開頭註解），沒有真實股價就不編一個
-    // 換算金額出來，直接顯示官方原始單位「張」最誠實。
+    // 原本只顯示「萬張」（不同股價的股票混在一起加總股數，沒有金額意義，使用者反應不夠
+    // 專業）。後端計算融資維持率時，本來就會把每檔股票的融資股數乘上最新收盤價加總算出
+    // 「擔保品市值」——這筆金額其實就等於「融資餘額換算成的錢」，不是另外憑空算的，直接
+    // 拿來顯示成財經媒體慣用的「億元」。如果D1沒有股價資料（極少數情況），退回顯示原始
+    // 「張」數，不要什麼都不顯示。
     const balEl = document.getElementById('marginRatioBalance');
-    if (balEl && data.totalBalance != null) {
-      balEl.textContent = `全市場融資餘額：${(data.totalBalance / 10000).toFixed(1)} 萬張`;
+    if (balEl) {
+      if (data.totalBalanceValueNTD != null) {
+        const billions = data.totalBalanceValueNTD / 1e8;
+        const coverage = data.totalBalanceValueMatchedStocks;
+        const totalStocks = data.matchedStocks;
+        const coverageNote = (coverage != null && totalStocks != null && coverage < totalStocks)
+          ? `（涵蓋${coverage}/${totalStocks}檔有股價資料的個股）`
+          : '';
+        balEl.textContent = `全市場融資餘額：${billions.toFixed(1)} 億元${coverageNote}`;
+      } else if (data.totalBalance != null) {
+        balEl.textContent = `全市場融資餘額：${(data.totalBalance / 10000).toFixed(1)} 萬張`;
+      }
     }
 
     // 使用率的分母是監理限額（遠大於實際餘額規模），比例結構性地卡在3~4%窄幅區間，單看

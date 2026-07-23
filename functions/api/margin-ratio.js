@@ -1,8 +1,9 @@
 // 台股大盤融資使用率 = 全市場融資今日餘額 ÷ 全市場融資限額 × 100%
 // 這是「整個市場有多少融資額度被用掉」的槓桿/投機熱度量尺，不是融資維持率（現有部位
-// 離斷頭多近）——兩者是不同的問題，維持率低不代表槓桿多，使用率高才是。
-// 資料來源：TWSE 信用交易統計表的個股明細（tables[1]），每一列本來就同時有「融資今日
-// 餘額」跟「次一營業日限額」兩欄，市場加總兩欄相除即可，不需要另外查股價或用到D1。
+// 離斷頭多近）——兩者是不同的問題，維持率低不代表槓桿多，使用率高才是，兩個都算、互補
+// 顯示。使用率本身不需要股價/D1（分子分母都是股數單位，見computeUsageRatio）；維持率
+// 跟融資餘額的「億元」金額換算則需要逐檔股價（見computeMaintenanceRatio），D1沒有資料
+// 時這兩項就回傳null，不影響使用率主功能正常運作。
 import { saveSnapshot, loadSnapshotFallback } from '../_lib/kvSnapshot.js';
 
 const BROWSER_HEADERS = {
@@ -178,7 +179,11 @@ async function computeMaintenanceRatio(env, body) {
 
     return {
       ratio: Math.round((collateralValue / marginAmountNTD) * 100 * 100) / 100,
-      collateralValue,
+      // collateralValue本身就是「融資餘額(股數)×現在股價」加總，等於融資餘額換算成的
+      // 金額（不是另外算的東西）——之前首頁只顯示「萬張」（原始股數單位，不同股價的股票
+      // 混在一起加總沒有金額意義），這裡直接把已經算好的金額暴露出去，換算成更專業、
+      // 財經媒體慣用的「億元」呈現。
+      totalBalanceValueNTD: collateralValue,
       marginAmount: marginAmountNTD,
       matchedStocks,
     };
@@ -215,6 +220,8 @@ export async function onRequestGet(context) {
       balancePercentile: percentileInfo?.percentile ?? null,
       balancePercentileHistoryDays: percentileInfo?.historyDays ?? null,
       maintenanceRatio: maintenanceInfo?.ratio ?? null,
+      totalBalanceValueNTD: maintenanceInfo?.totalBalanceValueNTD ?? null,
+      totalBalanceValueMatchedStocks: maintenanceInfo?.matchedStocks ?? null,
     };
     context.waitUntil(saveSnapshot(env, 'margin-ratio', result));
     return json(result);
