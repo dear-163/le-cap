@@ -495,7 +495,10 @@ function renderTech(symbol,data,info){
   <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border);font-size:11px;color:var(--text3);">
     <div style="margin-bottom:4px;color:var(--text2);">最近分析師評等異動（Yahoo彙整各券商實際發布的評等，不是本站推算）：</div>
     ${info.analystHistory.map(h=>`<div style="padding:2px 0;">${escapeHtml(h.firm)}${h.fromGrade&&h.toGrade&&h.fromGrade!==h.toGrade?`：${escapeHtml(h.fromGrade)} → ${escapeHtml(h.toGrade)}`:h.toGrade?`：${escapeHtml(h.toGrade)}`:''}${h.priceTarget?`（目標價 ${h.priceTarget}）`:''}${h.date?` · ${escapeHtml(h.date)}`:''}</div>`).join('')}
-  </div>`:''}
+  </div>`:(yahooRating?`
+  <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border);font-size:11px;color:var(--text3);">
+    Yahoo有提供這支股票的分析師共識評等數字（上方${info.numberOfAnalystOpinions?`${info.numberOfAnalystOpinions}位分析師`:'評級'}），但沒有提供逐筆券商名單——實測發現Yahoo這項資料對台股普遍缺乏覆蓋（美股如AAPL可以列出實際券商，台股目前查不到），這不是本站省略，是資料源本身的限制。
+  </div>`:'')}
 </div>`;
 
   document.getElementById('signalBarBox').innerHTML=`
