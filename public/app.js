@@ -433,9 +433,13 @@ function renderTech(symbol,data,info){
   const pe=typeof info.trailingPE==='number'?info.trailingPE.toFixed(1):'N/A';
   const mktCap=fmtCap(info.marketCap);
   const vol=fmtVol(dayVol);
-  const ratingVal=info.analystRating||info.recommendationKey||'N/A';
+  // Yahoo的recommendationKey在完全沒有分析師覆蓋時（常見於台股中小型股），不是留空，
+  // 而是回傳字面上的字串"none"——不能直接當成一個有效評級顯示給使用者看，要跟真的
+  // 沒資料一樣處理。
+  const yahooRating=info.recommendationKey&&info.recommendationKey!=='none'?info.recommendationKey:null;
+  const ratingVal=info.analystRating||yahooRating||'N/A';
   const ratingNote=info.analystRating?'來源：FMP 綜合評分（非真人分析師意見）'
-    :info.recommendationKey?`來源：Yahoo 分析師共識${info.numberOfAnalystOpinions?'（'+info.numberOfAnalystOpinions+'位分析師)':''}`
+    :yahooRating?`來源：Yahoo 分析師共識${info.numberOfAnalystOpinions?'（'+info.numberOfAnalystOpinions+'位分析師)':''}`
     :'';
   const n20highs=data.slice(-20).map(d=>d.high).filter(Boolean);
   const n20lows=data.slice(-20).map(d=>d.low).filter(Boolean);
@@ -868,7 +872,7 @@ function buildTechAIPrompt(symbol,companyName,t){
 3.  風控期望值過濾（硬性限制）：
     *   合理買入價必須滿足：(預期獲利目標 − 合理買入價) / (合理買入價 − 建議停損價) ≥ 2（風險報酬比至少 1:2）。若現價進場不符合此比例，必須在合理買入價中進行「壓低修正」。
 4.  停損價不可設在「正常波動雜訊範圍內」（硬性限制）：
-    *   停損價不能只是合理買入價往下隨便扣一個小數字——必須設在一個真正的技術破壞點（例如跌破樞紐 S2、跌破布林下軌、或跌破近期真正的低點support），且距離合理買入價至少要達到布林通道寬度（上軌−下軌）的 15% 以上。
+    *   停損價不能只是合理買入價往下隨便扣一個小數字——必須設在一個真正的技術破壞點（例如跌破樞紐 S2、跌破布林下軌、或跌破近期真正的低點support），且距離合理買入價至少要達到布林通道寬度（上軌−下軌）的 15% 以上（下方數據區已經幫你算好這個最小距離的實際數字，直接用，不用自己心算百分比）。
     *   若停損設得太緊（例如只是合理買入價的 1-2%），代表這支股票正常的日內波動就足以洗出這個停損，不是有效的風控，必須往下修正到更保守、真正反映技術破壞的價位。
 
 ---
@@ -887,6 +891,14 @@ function buildTechAIPrompt(symbol,companyName,t){
 
 所有價位數字（合理買入價、停損、停利）必須是從使用者提供的均線、樞紐點、布林通道等數值合理推算出來的，不可虛構不存在於輸入數據中的價位。
 請嚴格按照指定的 JSON Schema 輸出，不要包含任何 markdown 或程式碼區塊標記、也不要加任何 JSON 以外的說明文字。所有價位數字使用現價相同的小數位數。`;
+
+  // 「距離至少要達到通道寬度15%以上」這種要AI自己心算百分比的指令，對較弱的模型（例如
+  // 使用者常選的Flash-Lite）不可靠——直接把算好的最小距離數字給它，讓它只需要做一次
+  // 減法，比要求它先算通道寬度、再算15%、再比較兩個數字容易遵守得多。
+  const bbUpperNum=parseNumLoose(t.bbUpper),bbLowerNum=parseNumLoose(t.bbLower);
+  const minStopDistanceNote=(bbUpperNum!=null&&bbLowerNum!=null&&bbUpperNum>bbLowerNum)
+    ?`系統已算好：布林通道寬度=${(bbUpperNum-bbLowerNum).toFixed(2)}，停損價距離合理買入價「至少」要相差 ${((bbUpperNum-bbLowerNum)*0.15).toFixed(2)}（=通道寬度15%）以上——也就是停損價必須 ≤ 合理買入價 − ${((bbUpperNum-bbLowerNum)*0.15).toFixed(2)}，直接用這個數字，不用自己再算一次。`
+    :'';
 
   const user=`## 本次分析標的與即時數據
 
@@ -907,6 +919,7 @@ MACD=${t.macd}，Signal=${t.macdSignal}，能量柱=${t.macdHist}
 上軌=${t.bbUpper} 中軌=${t.bbMid} 下軌=${t.bbLower}
 通道開口：${t.bbTrend}
 現價位置：${t.bbPosition}
+${minStopDistanceNote}
 
 【成交量】
 今日量=${t.vol}，10日均量=${t.avgVol}，量能狀態：${t.volState}
@@ -1093,7 +1106,7 @@ function validateTechAIStrategy(result,techAIInput){
   if(entry!=null&&stopLoss!=null&&stopLoss<entry&&bbUpper!=null&&bbLower!=null&&bbUpper>bbLower){
     const bbWidth=bbUpper-bbLower;
     const stopDistance=entry-stopLoss;
-    if(stopDistance<bbWidth*0.2){
+    if(stopDistance<bbWidth*0.15){
       warnings.push(`停損距離（${stopDistance.toFixed(2)}）只有布林通道寬度（${bbWidth.toFixed(2)}）的 ${((stopDistance/bbWidth)*100).toFixed(0)}%，可能過緊——這支股票正常的價格波動就足以觸發停損，不是有效的風控設定`);
     }
   }

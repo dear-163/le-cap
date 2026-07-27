@@ -325,7 +325,11 @@ async function fetchYahooQuoteSummary(symbol, base, env) {
   const auth = await getYahooCrumb(env);
   if (!auth) return null;
   const summaryModules = 'price,summaryDetail,defaultKeyStatistics,financialData,assetProfile';
-  const unwrap = v => (v && typeof v === 'object' && 'raw' in v) ? v.raw : v;
+  // Yahoo quoteSummary通常把數值包成{raw,fmt,longFmt}，但少數欄位（例如冷門標的的
+  // numberOfAnalystOpinions）沒有分析師覆蓋時，Yahoo回傳的是不含raw鍵的空物件{}而不是
+  // null/缺欄位——這種情況要當成「沒有值」處理，不能把整個物件原樣傳出去，不然前端把
+  // 它跟字串相加會顯示成"[object Object]"。
+  const unwrap = v => (v && typeof v === 'object') ? (('raw' in v) ? v.raw : null) : v;
   for (const ver of ['v10', 'v11']) {
     for (const host of ['query1.finance.yahoo.com', 'query2.finance.yahoo.com']) {
       try {
