@@ -438,6 +438,14 @@ function renderTech(symbol,data,info){
   // 沒資料一樣處理。
   const yahooRating=info.recommendationKey&&info.recommendationKey!=='none'?info.recommendationKey:null;
   const ratingVal=info.analystRating||yahooRating||'N/A';
+  // 顏色要對應「這個評級實際上是不是正面」，不是「有沒有拿到值就上色」——之前的寫法犯的
+  // 就是這個錯，只要FMP有回傳任何字串（就算是Sell等級）都染成綠色。Yahoo的recommendationKey
+  // 是文件記載、已經實測驗證過的固定enum（strong_buy/buy/hold/sell/strong_sell/none），可以
+  // 放心對應顏色；FMP的rating是不透明的自家綜合評分（例如可能是"A+"這種字母等級），沒有
+  // 查到官方文件列出完整可能值，不確定就不亂猜對應關係、不上色，避免猜錯顏色比原本不上色更誤導。
+  const yahooSentiment=yahooRating==='strong_buy'||yahooRating==='buy'?'up'
+    :yahooRating==='sell'||yahooRating==='strong_sell'?'down':'';
+  const ratingClass=info.analystRating?'':yahooSentiment;
   const ratingNote=info.analystRating?'來源：FMP 綜合評分（非真人分析師意見）'
     :yahooRating?`來源：Yahoo 分析師共識${info.numberOfAnalystOpinions?'（'+info.numberOfAnalystOpinions+'位分析師)':''}`
     :'';
@@ -479,7 +487,7 @@ function renderTech(symbol,data,info){
     <div class="kpi"><div class="kpi-label">股價淨值比</div><div class="kpi-val">${typeof info.priceToBook==='number'?info.priceToBook.toFixed(2):'N/A'}</div></div>
     <div class="kpi"><div class="kpi-label">殖利率</div><div class="kpi-val ${typeof info.dividendYield==='number'?'up':''}">${typeof info.dividendYield==='number'?(info.dividendYield*100).toFixed(2)+'%':'N/A'}</div></div>
     <div class="kpi"><div class="kpi-label">Beta</div><div class="kpi-val">${typeof info.beta==='number'?info.beta.toFixed(2):'N/A'}</div></div>
-    <div class="kpi"><div class="kpi-label">分析師評級</div><div class="kpi-val">${ratingVal}</div>${ratingNote?`<div class="kpi-sub">${ratingNote}</div>`:''}</div>
+    <div class="kpi"><div class="kpi-label">分析師評級</div><div class="kpi-val ${ratingClass}">${ratingVal}</div>${ratingNote?`<div class="kpi-sub">${ratingNote}</div>`:''}</div>
     <div class="kpi"><div class="kpi-label">52週高</div><div class="kpi-val down">${typeof h52==='number'?fmt(h52):h52}</div></div>
     <div class="kpi"><div class="kpi-label">52週低</div><div class="kpi-val up">${typeof l52==='number'?fmt(l52):l52}</div></div>
   </div>
