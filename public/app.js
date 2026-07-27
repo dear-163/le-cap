@@ -844,9 +844,33 @@ async function streamGemini(payload,targetId,cardTitle,append,retryCount=0,gen=n
 }
 
 // ---- AI 深度技術判讀（合理買入價與風控策略）----
-// 使用者提供的完整交易員角色prompt。跟其他AI區塊（PROMPT_SECTIONS）不同，這裡要的是嚴格結構化
-// JSON輸出（合理買入價/停損/停利），不是HTML文字，所以用responseSchema強制Gemini回傳合法JSON，
-// 而不是像streamGemini那樣邊收邊顯示原始文字。
+// 進場/停損/停利價位不讓AI自己發明精確數字——早期版本讓AI直接算出「97.3」這種精確價位，
+// 還要求它自己心算「停損距離要佔布林通道寬度15%以上」「風報比要≥1:2」，結果AI（尤其是
+// Flash-Lite這類輕量模型）經常算錯，程式碼驗算天天跳警告，使用者根本沒辦法用。改成AI只能
+// 從下面這份「真實技術關卡清單」裡挑代號（例如選"PivotS1"當停損），關卡本身的數值是程式碼
+// 已經算好的真實均線/樞紐點/布林通道/歷史高低點，AI的工作變成「判斷該用哪個關卡」而不是
+// 「發明一個數字再自己驗算比例」，风控比例則完全交給程式碼用真實數字計算，不依賴AI心算。
+const TECH_LEVEL_LABELS={
+  MA5:'5日均線',MA20:'20日均線',MA60:'60日均線',
+  BBUpper:'布林上軌',BBMid:'布林中軌',BBLower:'布林下軌',
+  PivotS1:'樞紐支撐S1',PivotS2:'樞紐支撐S2',PivotR1:'樞紐壓力R1',PivotR2:'樞紐壓力R2',
+  Day20High:'20日高點',Day20Low:'20日低點',Day60High:'60日高點',Day60Low:'60日低點',
+  Week52High:'52週高點',Week52Low:'52週低點',CurrentPrice:'現價',
+};
+const TECH_LEVEL_NAMES=Object.keys(TECH_LEVEL_LABELS);
+function techLevelValues(t){
+  return {
+    MA5:parseNumLoose(t.ma5),MA20:parseNumLoose(t.ma20),MA60:parseNumLoose(t.ma60),
+    BBUpper:parseNumLoose(t.bbUpper),BBMid:parseNumLoose(t.bbMid),BBLower:parseNumLoose(t.bbLower),
+    PivotS1:parseNumLoose(t.pivS1),PivotS2:parseNumLoose(t.pivS2),
+    PivotR1:parseNumLoose(t.pivR1),PivotR2:parseNumLoose(t.pivR2),
+    Day20High:parseNumLoose(t.r1),Day20Low:parseNumLoose(t.s1),
+    Day60High:parseNumLoose(t.r2),Day60Low:parseNumLoose(t.s2),
+    Week52High:parseNumLoose(t.h52),Week52Low:parseNumLoose(t.l52),
+    CurrentPrice:parseNumLoose(t.lc),
+  };
+}
+
 function buildTechAIPrompt(symbol,companyName,t){
   const system=`## 角色與定位
 你是一位資深的台股（TWSE/TPEx）短線造市商與量化交易員。你的任務是讀取以下技術指標、關鍵價位與現價，進行多空動能的深度審查。
@@ -872,21 +896,22 @@ function buildTechAIPrompt(symbol,companyName,t){
 
 ---
 
-## 合理買入價與風控計算邏輯 (Fair Price & Risk/Reward Calculation)
+## 進場／停損／停利關卡選擇邏輯 (Level Selection, not Free-form Prices)
 
-當策略評估為「可佈局（偏多/跌深反彈）」時，你必須依據下方數據，依循以下邏輯推算合理買入價：
+**你不能自己發明精確價位數字。** 進場、停損、停利三個價位，都必須從下方【可選技術關卡清單】裡選一個關卡代號（例如"MA5"、"PivotS1"、"Day60High"），分別填進 entry_level／stop_loss_level／take_profit_level。清單裡每個關卡的實際數值都是系統已經算好的真實均線/樞紐點/布林通道/歷史高低點，你的工作是判斷「這個技術結構下，該用哪個關卡」，不是計算一個新數字。系統事後會用你選的關卡實際數值計算風險報酬比與停損距離是否合理，不需要你自己心算百分比或比例。
+
+當策略評估為「可佈局（偏多/跌深反彈）」時，依循以下邏輯選擇關卡：
 
 1.  多頭趨勢（趨勢指標=多頭 / 布林=通道中軌或上軌）：
-    *   合理買入價定位：不盲目追高，合理買入價應落在「現價拉回至關鍵支撐」的交集區。
-    *   計算參考：優先考慮 MA5 與 樞紐 S1 之間的重疊區間。若現價離 MA5 過遠（乖離過大），必須警示「溢價過高，應等待拉回至 MA5 數值附近再行介入」。
+    *   進場關卡：優先選 MA5 或 PivotS1（現價拉回至關鍵支撐的交集區）。若現價離 MA5 過遠（乖離過大），必須警示「溢價過高，應等待拉回至 MA5 數值附近再行介入」，且進場關卡仍應選 MA5，不要選現價（CurrentPrice）追高。
 2.  逆勢橫盤（布林=通道下軌 / KD/RSI=超賣）：
-    *   合理買入價定位：尋找左側築底支撐。
-    *   計算參考：合理買入價應設定在 樞紐 S1 至 樞紐 S2 之間，或接近 布林下軌 處，此時買入的防守成本最低。
-3.  風控期望值過濾（硬性限制）：
-    *   合理買入價必須滿足：(預期獲利目標 − 合理買入價) / (合理買入價 − 建議停損價) ≥ 2（風險報酬比至少 1:2）。若現價進場不符合此比例，必須在合理買入價中進行「壓低修正」。
-4.  停損價不可設在「正常波動雜訊範圍內」（硬性限制）：
-    *   停損價不能只是合理買入價往下隨便扣一個小數字——必須設在一個真正的技術破壞點（例如跌破樞紐 S2、跌破布林下軌、或跌破近期真正的低點support），且距離合理買入價至少要達到布林通道寬度（上軌−下軌）的 15% 以上（下方數據區已經幫你算好這個最小距離的實際數字，直接用，不用自己心算百分比）。
-    *   若停損設得太緊（例如只是合理買入價的 1-2%），代表這支股票正常的日內波動就足以洗出這個停損，不是有效的風控，必須往下修正到更保守、真正反映技術破壞的價位。
+    *   進場關卡：優先選 PivotS1、PivotS2 或 BBLower（左側築底支撐，防守成本最低）。
+3.  停損關卡（硬性限制）：
+    *   停損關卡必須低於進場關卡選到的數值，且必須是一個真正的技術破壞點——只能從 PivotS2、BBLower、Day20Low、Day60Low、Week52Low 裡挑，不能跟進場關卡選同一個代號。
+    *   若進場關卡選的是 MA5 或 PivotS1，停損通常應該選更下方的 PivotS2 或 BBLower，不要選一個離進場關卡太近、正常波動就會洗出場的關卡。
+4.  停利關卡（硬性限制）：
+    *   停利關卡必須高於進場關卡選到的數值，只能從 PivotR1、PivotR2、BBUpper、Day20High、Day60High、Week52High 裡挑一個真實存在的壓力關卡。
+    *   停利關卡與進場關卡的價差，相對進場關卡與停損關卡的價差，必須達到至少2倍（風險報酬比≥1:2）——如果你想選的停利關卡離進場關卡太近、達不到2倍，改選更遠一點的關卡（例如 PivotR1 不夠遠就改選 PivotR2 或 Day60High），而不是維持原本的關卡選擇。
 
 ---
 
@@ -902,16 +927,11 @@ function buildTechAIPrompt(symbol,companyName,t){
 
 這只是描述「現在這個技術圖形長得像哪一種」，不是要你去模仿任何特定交易者的個人操作習慣，也不是操作指示——分類理由必須引用上面實際的數值特徵，不可憑空判斷。
 
-所有價位數字（合理買入價、停損、停利）必須是從使用者提供的均線、樞紐點、布林通道等數值合理推算出來的，不可虛構不存在於輸入數據中的價位。
-請嚴格按照指定的 JSON Schema 輸出，不要包含任何 markdown 或程式碼區塊標記、也不要加任何 JSON 以外的說明文字。所有價位數字使用現價相同的小數位數。`;
+entry_level／stop_loss_level／take_profit_level 只能填【可選技術關卡清單】裡出現的代號，不可以自己編一個清單以外的代號或直接寫數字。rationale 欄位用文字說明「為什麼選這個關卡」，可以引用技術指標，但不要在文字裡寫出跟你選的關卡矛盾的數字。
+請嚴格按照指定的 JSON Schema 輸出，不要包含任何 markdown 或程式碼區塊標記、也不要加任何 JSON 以外的說明文字。`;
 
-  // 「距離至少要達到通道寬度15%以上」這種要AI自己心算百分比的指令，對較弱的模型（例如
-  // 使用者常選的Flash-Lite）不可靠——直接把算好的最小距離數字給它，讓它只需要做一次
-  // 減法，比要求它先算通道寬度、再算15%、再比較兩個數字容易遵守得多。
-  const bbUpperNum=parseNumLoose(t.bbUpper),bbLowerNum=parseNumLoose(t.bbLower);
-  const minStopDistanceNote=(bbUpperNum!=null&&bbLowerNum!=null&&bbUpperNum>bbLowerNum)
-    ?`系統已算好：布林通道寬度=${(bbUpperNum-bbLowerNum).toFixed(2)}，停損價距離合理買入價「至少」要相差 ${((bbUpperNum-bbLowerNum)*0.15).toFixed(2)}（=通道寬度15%）以上——也就是停損價必須 ≤ 合理買入價 − ${((bbUpperNum-bbLowerNum)*0.15).toFixed(2)}，直接用這個數字，不用自己再算一次。`
-    :'';
+  const levels=techLevelValues(t);
+  const levelListText=TECH_LEVEL_NAMES.map(k=>`${k}（${TECH_LEVEL_LABELS[k]}）=${levels[k]!=null?levels[k]:'N/A'}`).join('\n');
 
   const user=`## 本次分析標的與即時數據
 
@@ -932,7 +952,6 @@ MACD=${t.macd}，Signal=${t.macdSignal}，能量柱=${t.macdHist}
 上軌=${t.bbUpper} 中軌=${t.bbMid} 下軌=${t.bbLower}
 通道開口：${t.bbTrend}
 現價位置：${t.bbPosition}
-${minStopDistanceNote}
 
 【成交量】
 今日量=${t.vol}，10日均量=${t.avgVol}，量能狀態：${t.volState}
@@ -942,7 +961,10 @@ ${minStopDistanceNote}
 樞紐 R1=${t.pivR1} R2=${t.pivR2}
 樞紐 S1=${t.pivS1} S2=${t.pivS2}
 20日高低=${t.r1}/${t.s1}，60日高低=${t.r2}/${t.s2}
-52週高低=${t.h52}/${t.l52}`;
+52週高低=${t.h52}/${t.l52}
+
+【可選技術關卡清單（entry_level／stop_loss_level／take_profit_level 只能從這裡面選代號）】
+${levelListText}`;
 
   return {system,user};
 }
@@ -964,19 +986,18 @@ const TECH_AI_SCHEMA={
     fair_entry_price:{
       type:'OBJECT',
       properties:{
-        recommended_price:{type:'NUMBER'},
-        price_range:{type:'STRING'},
+        entry_level:{type:'STRING',enum:TECH_LEVEL_NAMES},
         rationale:{type:'STRING'},
       },
-      required:['recommended_price','price_range','rationale'],
+      required:['entry_level','rationale'],
     },
     action_plan:{
       type:'OBJECT',
       properties:{
-        stop_loss:{type:'STRING'},
-        take_profit:{type:'STRING'},
+        stop_loss_level:{type:'STRING',enum:TECH_LEVEL_NAMES},
+        take_profit_level:{type:'STRING',enum:TECH_LEVEL_NAMES},
       },
-      required:['stop_loss','take_profit'],
+      required:['stop_loss_level','take_profit_level'],
     },
   },
   required:['overall_signal','matched_strategy','technical_nuance_warning','style_archetype','fair_entry_price','action_plan'],
@@ -1077,54 +1098,52 @@ function parseNumLoose(v){
   return isFinite(n)?n:null;
 }
 
-// 事後驗算：prompt指令降低不了AI編數字的機率到0，所以這裡用程式碼把AI回傳的價位跟
-// 真實技術數值（techAIInput，跟AI拿到的是同一份資料）對一遍——停損/停利的基本順序、
-// AI自己被要求遵守的風報比≥1:2規則、跟52週價格區間比對是否離譜。抓不到的問題還是抓不到
-// （AI可能用巧妙但仍然錯的方式維持"看起來合理"的數字），但能擋掉最明顯的離譜幻覺。
+// 事後驗算：AI現在只能從真實技術關卡清單裡選代號（entry_level/stop_loss_level/
+// take_profit_level），不再自己發明精確數字，所以這裡用選到的代號去查真實數值（跟AI拿到的
+// 是同一份techLevelValues），完全用查到的真實數字計算風報比/停損距離，不依賴AI自己心算
+// 比例對不對——比舊版本（AI自己輸出數字、程式碼再驗算）更可靠，因為現在數字本身就保證
+// 是真實關卡，驗算只是在檢查「選的關卡組合合不合理」，不是在抓「數字是不是幻覺」。
 function validateTechAIStrategy(result,techAIInput){
   const warnings=[];
+  const levels=techLevelValues(techAIInput);
   const fp=result.fair_entry_price||{};
   const ap=result.action_plan||{};
-  const entry=typeof fp.recommended_price==='number'?fp.recommended_price:null;
-  const stopLoss=parseNumLoose(ap.stop_loss);
-  const takeProfit=parseNumLoose(ap.take_profit);
+  const entryLevel=fp.entry_level,stopLevel=ap.stop_loss_level,targetLevel=ap.take_profit_level;
+  const entry=entryLevel!=null&&levels[entryLevel]!=null?levels[entryLevel]:null;
+  const stopLoss=stopLevel!=null&&levels[stopLevel]!=null?levels[stopLevel]:null;
+  const takeProfit=targetLevel!=null&&levels[targetLevel]!=null?levels[targetLevel]:null;
 
-  if(entry==null) warnings.push('AI 未提供可用的合理買入價數值');
-  if(stopLoss==null) warnings.push('AI 提供的停損價無法解析為數字');
-  if(takeProfit==null) warnings.push('AI 提供的停利價無法解析為數字');
+  if(entry==null) warnings.push(`AI選的進場關卡「${entryLevel||'（未提供）'}」目前沒有可用數值`);
+  if(stopLoss==null) warnings.push(`AI選的停損關卡「${stopLevel||'（未提供）'}」目前沒有可用數值`);
+  if(takeProfit==null) warnings.push(`AI選的停利關卡「${targetLevel||'（未提供）'}」目前沒有可用數值`);
 
+  if(entryLevel!=null&&stopLevel===entryLevel){
+    warnings.push(`停損關卡跟進場關卡選了同一個（${TECH_LEVEL_LABELS[entryLevel]||entryLevel}），停損形同虛設`);
+  }
   if(entry!=null&&stopLoss!=null&&stopLoss>=entry){
-    warnings.push(`停損價（${stopLoss}）沒有低於合理買入價（${entry}），不符合基本邏輯`);
+    warnings.push(`停損關卡（${TECH_LEVEL_LABELS[stopLevel]||stopLevel}＝${stopLoss}）沒有低於進場關卡（${TECH_LEVEL_LABELS[entryLevel]||entryLevel}＝${entry}），不符合基本邏輯`);
   }
   if(entry!=null&&takeProfit!=null&&takeProfit<=entry){
-    warnings.push(`停利價（${takeProfit}）沒有高於合理買入價（${entry}），不符合基本邏輯`);
+    warnings.push(`停利關卡（${TECH_LEVEL_LABELS[targetLevel]||targetLevel}＝${takeProfit}）沒有高於進場關卡（${TECH_LEVEL_LABELS[entryLevel]||entryLevel}＝${entry}），不符合基本邏輯`);
   }
   if(entry!=null&&stopLoss!=null&&takeProfit!=null&&stopLoss<entry&&takeProfit>entry){
     const rr=(takeProfit-entry)/(entry-stopLoss);
-    if(rr<1.9) warnings.push(`風險報酬比僅約 1:${rr.toFixed(2)}，未達 prompt 要求 AI 遵守的 1:2 門檻`);
+    if(rr<1.9) warnings.push(`風險報酬比僅約 1:${rr.toFixed(2)}（進場${TECH_LEVEL_LABELS[entryLevel]}＝${entry}、停損${TECH_LEVEL_LABELS[stopLevel]}＝${stopLoss}、停利${TECH_LEVEL_LABELS[targetLevel]}＝${takeProfit}），未達要求的1:2門檻——AI選的停利關卡離進場點太近，應改選更遠的壓力關卡`);
   }
 
-  const h52=parseNumLoose(techAIInput.h52),l52=parseNumLoose(techAIInput.l52);
-  if(entry!=null&&h52!=null&&l52!=null&&h52>l52){
-    const buffer=(h52-l52)*0.15;
-    if(entry>h52+buffer||entry<l52-buffer){
-      warnings.push(`合理買入價（${entry}）明顯超出52週價格區間（${l52}~${h52}），疑似幻覺數字`);
-    }
-  }
-
-  // 停損太緊的問題不是「數字順序錯」，是「正常價格雜訊就會把停損打掉」，prompt指令沒辦法
-  // 保證AI真的照做，這裡用布林通道寬度（20日的實際波動幅度）當波動性的客觀量尺，量化檢查
-  // 停損距離是不是明顯小於這支股票正常的日內/短期波動——是的話代表這個停損不是有效風控。
-  const bbUpper=parseNumLoose(techAIInput.bbUpper),bbLower=parseNumLoose(techAIInput.bbLower);
+  // 停損太緊的問題不是「數字順序錯」，是「正常價格雜訊就會把停損打掉」——這裡用布林通道
+  // 寬度（20日的實際波動幅度）當波動性的客觀量尺，量化檢查停損距離是不是明顯小於這支股票
+  // 正常的日內/短期波動。因為entry/stopLoss現在保證是真實關卡數值，這個檢查完全可靠。
+  const bbUpper=levels.BBUpper,bbLower=levels.BBLower;
   if(entry!=null&&stopLoss!=null&&stopLoss<entry&&bbUpper!=null&&bbLower!=null&&bbUpper>bbLower){
     const bbWidth=bbUpper-bbLower;
     const stopDistance=entry-stopLoss;
     if(stopDistance<bbWidth*0.15){
-      warnings.push(`停損距離（${stopDistance.toFixed(2)}）只有布林通道寬度（${bbWidth.toFixed(2)}）的 ${((stopDistance/bbWidth)*100).toFixed(0)}%，可能過緊——這支股票正常的價格波動就足以觸發停損，不是有效的風控設定`);
+      warnings.push(`停損距離（${stopDistance.toFixed(2)}）只有布林通道寬度（${bbWidth.toFixed(2)}）的 ${((stopDistance/bbWidth)*100).toFixed(0)}%，可能過緊——${TECH_LEVEL_LABELS[stopLevel]||stopLevel}離${TECH_LEVEL_LABELS[entryLevel]||entryLevel}太近，這支股票正常的價格波動就足以觸發停損`);
     }
   }
 
-  return warnings;
+  return {warnings,entry,stopLoss,takeProfit,entryLevel,stopLevel,targetLevel};
 }
 
 async function runTechAIStrategy(symbol,companyName,techAIInput,gen){
@@ -1141,14 +1160,15 @@ async function runTechAIStrategy(symbol,companyName,techAIInput,gen){
   }
 }
 
-function renderTechAIStrategy(result,warnings){
+function renderTechAIStrategy(result,validation){
   const el=document.getElementById('techAIBox');
+  const {warnings,entry,stopLoss,takeProfit,entryLevel,stopLevel,targetLevel}=validation;
+  const levelLabel=k=>TECH_LEVEL_LABELS[k]||k||'（未提供）';
   const sig=result.overall_signal||'';
   const bullish=/多頭|反彈/.test(sig)&&!/弱勢|空頭/.test(sig);
   const bearish=/弱勢|空頭/.test(sig);
   const sigClass=bullish?'up':bearish?'down':'neutral';
   const fp=result.fair_entry_price||{};
-  const ap=result.action_plan||{};
   const style=result.style_archetype||{};
   el.innerHTML=`
 <div class="conclusion-card">
@@ -1164,16 +1184,16 @@ function renderTechAIStrategy(result,warnings){
   <div class="ind-card" style="margin-top:12px;background:var(--bg3)">
     <div class="ind-title">🎯 合理買入價</div>
     <div style="display:flex;align-items:baseline;gap:12px;margin:6px 0">
-      <span style="font-size:26px;font-weight:700;color:var(--text)">${typeof fp.recommended_price==='number'?fmt(fp.recommended_price):'N/A'}</span>
-      <span style="font-size:13px;color:var(--text3)">${escapeHtml(fp.price_range||'')}</span>
+      <span style="font-size:26px;font-weight:700;color:var(--text)">${entry!=null?fmt(entry):'N/A'}</span>
+      <span style="font-size:13px;color:var(--text3)">關卡：${escapeHtml(levelLabel(entryLevel))}</span>
     </div>
     <div style="font-size:12px;color:var(--text2);line-height:1.6">${escapeHtml(fp.rationale||'')}</div>
   </div>
   <div class="kpi-grid" style="margin-top:12px">
-    <div class="kpi"><div class="kpi-label">建議停損價</div><div class="kpi-val down">${escapeHtml(String(ap.stop_loss??'N/A'))}</div></div>
-    <div class="kpi"><div class="kpi-label">預期目標價</div><div class="kpi-val up">${escapeHtml(String(ap.take_profit??'N/A'))}</div></div>
+    <div class="kpi"><div class="kpi-label">建議停損價</div><div class="kpi-val down">${stopLoss!=null?fmt(stopLoss):'N/A'}</div><div class="kpi-sub">關卡：${escapeHtml(levelLabel(stopLevel))}</div></div>
+    <div class="kpi"><div class="kpi-label">預期目標價</div><div class="kpi-val up">${takeProfit!=null?fmt(takeProfit):'N/A'}</div><div class="kpi-sub">關卡：${escapeHtml(levelLabel(targetLevel))}</div></div>
   </div>
-  <div class="disclaimer" style="margin-top:12px">⚠ 本 AI 判讀基於技術指標數值推論，非投資建議，實際交易請自行評估風險並設定停損。</div>
+  <div class="disclaimer" style="margin-top:12px">⚠ 本 AI 判讀基於技術指標數值推論，非投資建議，實際交易請自行評估風險並設定停損。進場/停損/停利價位皆為系統計算好的真實技術關卡（均線、樞紐點、布林通道、歷史高低點），並非 AI 憑空生成的數字。</div>
 </div>`;
 }
 
