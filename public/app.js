@@ -1137,14 +1137,19 @@ function pickTargetLevel(levels,entryLevel,entry,stopLoss){
 // 找不到任何一個距離夠遠的候選），不會再是AI選錯或算錯造成的。
 function validateTechAIStrategy(result,techAIInput){
   const warnings=[];
+  // entry_level=CurrentPrice時，technical_nuance_warning已經明講「不是進場建議、僅供參考」，
+  // 這時候風控距離/風報比不夠再跳一次🛑警告等於重複提醒同一件事，而且視覺上容易被誤會成
+  // 程式壞掉——這種情況下的資訊改放進notes，用比較不驚動的方式呈現在卡片內，而不是警示框。
+  const notes=[];
   const levels=techLevelValues(techAIInput);
   const fp=result.fair_entry_price||{};
   const entryLevel=fp.entry_level;
   const entry=entryLevel!=null&&levels[entryLevel]!=null?levels[entryLevel]:null;
+  const isReferenceOnly=entryLevel==='CurrentPrice';
 
   if(entry==null){
     warnings.push(`AI選的進場關卡「${entryLevel||'（未提供）'}」目前沒有可用數值`);
-    return {warnings,entry:null,stopLoss:null,takeProfit:null,entryLevel,stopLevel:null,targetLevel:null};
+    return {warnings,notes,entry:null,stopLoss:null,takeProfit:null,entryLevel,stopLevel:null,targetLevel:null};
   }
 
   const stopLevel=pickStopLevel(levels,entryLevel,entry);
@@ -1160,17 +1165,19 @@ function validateTechAIStrategy(result,techAIInput){
     const bbWidth=bbUpper-bbLower;
     const stopDistance=entry-stopLoss;
     if(stopDistance<bbWidth*0.15){
-      warnings.push(`系統找得到最遠的真實支撐關卡（${TECH_LEVEL_LABELS[stopLevel]||stopLevel}）距離進場關卡仍只有布林通道寬度的 ${((stopDistance/bbWidth)*100).toFixed(0)}%——這支股票目前的技術結構下，所有真實支撐位對這個進場點來說都偏近，此停損可能仍嫌過緊，請自行斟酌`);
+      const msg=`系統找得到最遠的真實支撐關卡（${TECH_LEVEL_LABELS[stopLevel]||stopLevel}）距離進場關卡仍只有布林通道寬度的 ${((stopDistance/bbWidth)*100).toFixed(0)}%——這支股票目前的技術結構下，所有真實支撐位對這個進場點來說都偏近，此停損可能仍嫌過緊，請自行斟酌`;
+      (isReferenceOnly?notes:warnings).push(msg);
     }
   }
   if(stopLoss!=null&&takeProfit!=null){
     const rr=(takeProfit-entry)/(entry-stopLoss);
     if(rr<1.9){
-      warnings.push(`系統找得到最遠的真實壓力關卡（${TECH_LEVEL_LABELS[targetLevel]||targetLevel}）換算風險報酬比仍只有約 1:${rr.toFixed(2)}——這支股票目前的技術結構下沒有達到1:2的停利位，請自行斟酌`);
+      const msg=`系統找得到最遠的真實壓力關卡（${TECH_LEVEL_LABELS[targetLevel]||targetLevel}）換算風險報酬比仍只有約 1:${rr.toFixed(2)}——這支股票目前的技術結構下沒有達到1:2的停利位，請自行斟酌`;
+      (isReferenceOnly?notes:warnings).push(msg);
     }
   }
 
-  return {warnings,entry,stopLoss,takeProfit,entryLevel,stopLevel,targetLevel};
+  return {warnings,notes,entry,stopLoss,takeProfit,entryLevel,stopLevel,targetLevel};
 }
 
 async function runTechAIStrategy(symbol,companyName,techAIInput,gen){
@@ -1189,7 +1196,7 @@ async function runTechAIStrategy(symbol,companyName,techAIInput,gen){
 
 function renderTechAIStrategy(result,validation){
   const el=document.getElementById('techAIBox');
-  const {warnings,entry,stopLoss,takeProfit,entryLevel,stopLevel,targetLevel}=validation;
+  const {warnings,notes,entry,stopLoss,takeProfit,entryLevel,stopLevel,targetLevel}=validation;
   const levelLabel=k=>TECH_LEVEL_LABELS[k]||k||'（未提供）';
   const sig=result.overall_signal||'';
   const bullish=/多頭|反彈/.test(sig)&&!/弱勢|空頭/.test(sig);
@@ -1220,6 +1227,7 @@ function renderTechAIStrategy(result,validation){
     <div class="kpi"><div class="kpi-label">建議停損價</div><div class="kpi-val down">${stopLoss!=null?fmt(stopLoss):'N/A'}</div><div class="kpi-sub">關卡：${escapeHtml(levelLabel(stopLevel))}（系統自動計算）</div></div>
     <div class="kpi"><div class="kpi-label">預期目標價</div><div class="kpi-val up">${takeProfit!=null?fmt(takeProfit):'N/A'}</div><div class="kpi-sub">關卡：${escapeHtml(levelLabel(targetLevel))}（系統自動計算）</div></div>
   </div>
+  ${(notes&&notes.length)?`<div style="margin-top:10px;font-size:11px;color:var(--text3);line-height:1.6">${notes.map(n=>`<div>ⓘ ${escapeHtml(n)}</div>`).join('')}</div>`:''}
   <div class="disclaimer" style="margin-top:12px">⚠ 本 AI 判讀基於技術指標數值推論，非投資建議，實際交易請自行評估風險並設定停損。進場關卡由 AI 判斷技術結構選出；停損/停利關卡則由系統從真實技術關卡（均線、樞紐點、布林通道、歷史高低點）自動計算，確保距離與風險報酬比符合基本風控門檻，不是 AI 自行決定或憑空生成的數字。</div>
 </div>`;
 }
