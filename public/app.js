@@ -435,8 +435,11 @@ function renderTech(symbol,data,info){
   const vol=fmtVol(dayVol);
   // Yahoo的recommendationKey在完全沒有分析師覆蓋時（常見於台股中小型股），不是留空，
   // 而是回傳字面上的字串"none"——不能直接當成一個有效評級顯示給使用者看，要跟真的
-  // 沒資料一樣處理。
-  const yahooRating=info.recommendationKey&&info.recommendationKey!=='none'?info.recommendationKey:null;
+  // 沒資料一樣處理。另外實測發現台股（2330/2317/2454/2308.TW全部一樣）雖然有這個彙總
+  // 評級數字，但Yahoo的逐筆券商名單（analystHistory）系統性地不覆蓋台股，只有數字、
+  // 沒有任何可查證的明細——沒有明細的評級數字使用者沒辦法核實，等於黑箱，這裡選擇不顯示，
+  // 而不是留一個看起來像有根據、但實際上驗不到來源的數字。
+  const yahooRating=info.recommendationKey&&info.recommendationKey!=='none'&&info.analystHistory&&info.analystHistory.length?info.recommendationKey:null;
   const ratingVal=info.analystRating||yahooRating||'N/A';
   // 顏色要對應「這個評級實際上是不是正面」，不是「有沒有拿到值就上色」——之前的寫法犯的
   // 就是這個錯，只要FMP有回傳任何字串（就算是Sell等級）都染成綠色。Yahoo的recommendationKey
@@ -495,9 +498,9 @@ function renderTech(symbol,data,info){
   <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border);font-size:11px;color:var(--text3);">
     <div style="margin-bottom:4px;color:var(--text2);">最近分析師評等異動（Yahoo彙整各券商實際發布的評等，不是本站推算）：</div>
     ${info.analystHistory.map(h=>`<div style="padding:2px 0;">${escapeHtml(h.firm)}${h.fromGrade&&h.toGrade&&h.fromGrade!==h.toGrade?`：${escapeHtml(h.fromGrade)} → ${escapeHtml(h.toGrade)}`:h.toGrade?`：${escapeHtml(h.toGrade)}`:''}${h.priceTarget?`（目標價 ${h.priceTarget}）`:''}${h.date?` · ${escapeHtml(h.date)}`:''}</div>`).join('')}
-  </div>`:(yahooRating?`
+  </div>`:(info.recommendationKey&&info.recommendationKey!=='none'?`
   <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border);font-size:11px;color:var(--text3);">
-    Yahoo有提供這支股票的分析師共識評等數字（上方${info.numberOfAnalystOpinions?`${info.numberOfAnalystOpinions}位分析師`:'評級'}），但沒有提供逐筆券商名單——實測發現Yahoo這項資料對台股普遍缺乏覆蓋（美股如AAPL可以列出實際券商，台股目前查不到），這不是本站省略，是資料源本身的限制。
+    Yahoo實際上有提供這支股票的分析師共識評等數字（${info.numberOfAnalystOpinions?`${info.numberOfAnalystOpinions}位分析師，`:''}評等：${escapeHtml(info.recommendationKey)}），但沒有提供逐筆券商名單可供查證——實測發現這是台股普遍的資料缺口（美股如AAPL可以列出實際券商，台股目前查不到）。沒有明細等於黑箱，本站選擇不顯示「分析師評級」這一項，而不是顯示一個驗不到來源的數字。
   </div>`:'')}
 </div>`;
 
