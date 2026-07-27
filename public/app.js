@@ -479,7 +479,7 @@ function renderTech(symbol,data,info){
     <div class="kpi"><div class="kpi-label">股價淨值比</div><div class="kpi-val">${typeof info.priceToBook==='number'?info.priceToBook.toFixed(2):'N/A'}</div></div>
     <div class="kpi"><div class="kpi-label">殖利率</div><div class="kpi-val ${typeof info.dividendYield==='number'?'up':''}">${typeof info.dividendYield==='number'?(info.dividendYield*100).toFixed(2)+'%':'N/A'}</div></div>
     <div class="kpi"><div class="kpi-label">Beta</div><div class="kpi-val">${typeof info.beta==='number'?info.beta.toFixed(2):'N/A'}</div></div>
-    <div class="kpi"><div class="kpi-label">分析師評級</div><div class="kpi-val ${info.analystRating?'up':''}">${ratingVal}</div>${ratingNote?`<div class="kpi-sub">${ratingNote}</div>`:''}</div>
+    <div class="kpi"><div class="kpi-label">分析師評級</div><div class="kpi-val">${ratingVal}</div>${ratingNote?`<div class="kpi-sub">${ratingNote}</div>`:''}</div>
     <div class="kpi"><div class="kpi-label">52週高</div><div class="kpi-val down">${typeof h52==='number'?fmt(h52):h52}</div></div>
     <div class="kpi"><div class="kpi-label">52週低</div><div class="kpi-val up">${typeof l52==='number'?fmt(l52):l52}</div></div>
   </div>
