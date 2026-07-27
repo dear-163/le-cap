@@ -1723,24 +1723,6 @@ function loadPersistedSettings(){
   }
 }
 loadPersistedSettings();
-function copyTechConclusion(){
-  const el=document.getElementById('techConclusionBox');
-  if(!el){ alert('尚無技術面結論可複製'); return; }
-  const txt=el.innerText||el.textContent||'';
-  navigator.clipboard?.writeText(txt).then(()=>alert('技術面結論已複製到剪貼簿'),()=>alert('複製失敗'));
-}
-function downloadReport(){
-  const main=document.getElementById('mainReport');
-  if(!main||!currentSymbol){ alert('請先完成分析後再下載'); return; }
-  const html='<!doctype html><html><head><meta charset="utf-8"><title>le cap 報告 - '+escapeHtml(currentSymbol)+'</title></head><body style="background:#0f0f14;color:#e8e8f0;font-family:Arial,Helvetica,sans-serif;padding:20px">'+main.innerHTML+'</body></html>';
-  const blob=new Blob([html],{type:'text/html'});
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);
-  a.download=(currentSymbol||'le-cap-report')+'.html';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-}
 document.getElementById('symbolInput').addEventListener('keydown',e=>{if(e.key==='Enter')analyze();});
 
 // D1掛掉時後端會退回KV快照（見functions/_lib/kvSnapshot.js），標示stale:true。這裡刻意
