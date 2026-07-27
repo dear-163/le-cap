@@ -36,18 +36,22 @@ function sleep(ms) {
 // 把每個排程步驟最近一次的執行結果寫進cron_diagnostics，讓「這個步驟現在是不是壞的」
 // 變成一句SQL就能查，不用依賴wrangler tail即時監看log（公債殖利率那個步驟連續252天
 // 失敗都沒人發現，就是因為失敗訊息只印在log裡，沒人即時盯著）。error傳null代表這次成功。
-async function logStep(db, step, nowHHMM, error) {
+// 2026-07-27事故：只存HH:MM不存日期，導致某天整條pipeline悄悄沒寫入資料時，事後完全查不出
+// 「上次成功到底是哪一天」——診斷表看起來永遠是「成功」，其實只是上一次真正成功留下的舊值
+// 沒被覆蓋。欄位本身是TEXT沒有格式限制，不需要改schema，直接把日期併進時間字串裡存。
+async function logStep(db, step, todayAd, nowHHMM, error) {
+  const stamp = `${todayAd} ${nowHHMM}`;
   try {
     if (error) {
       await db.prepare(`
         INSERT INTO cron_diagnostics (step, last_run_at, last_error) VALUES (?, ?, ?)
         ON CONFLICT(step) DO UPDATE SET last_run_at = excluded.last_run_at, last_error = excluded.last_error
-      `).bind(step, nowHHMM, error).run();
+      `).bind(step, stamp, error).run();
     } else {
       await db.prepare(`
         INSERT INTO cron_diagnostics (step, last_run_at, last_success_at, last_error) VALUES (?, ?, ?, NULL)
         ON CONFLICT(step) DO UPDATE SET last_run_at = excluded.last_run_at, last_success_at = excluded.last_success_at, last_error = NULL
-      `).bind(step, nowHHMM, nowHHMM).run();
+      `).bind(step, stamp, stamp).run();
     }
   } catch (e) {
     // 診斷表本身寫失敗不該影響主要排程邏輯，只印log。
@@ -1145,19 +1149,19 @@ export default {
         // 邏輯失準。
         await fetchAndStoreActiveEtfHoldings(db, todayDash);
         console.log('[cron] 主動式 ETF 持股爬蟲執行完成');
-        await logStep(db, 'activeEtfHoldings', nowHHMM, null);
+        await logStep(db, 'activeEtfHoldings', todayAd, nowHHMM, null);
       } catch (e) {
         console.error('[cron] 主動式 ETF 持股爬蟲失敗：', e.message);
-        await logStep(db, 'activeEtfHoldings', nowHHMM, e.message);
+        await logStep(db, 'activeEtfHoldings', todayAd, nowHHMM, e.message);
       }
 
       try {
         const outcome = await recordEtfSignalsAndEvaluateOutcomes(db, todayDash);
         console.log(`[cron] ETF訊號勝率追蹤：新增 ${outcome.recorded} 筆訊號、評估 ${outcome.evaluated} 筆結果`);
-        await logStep(db, 'etfSignalOutcomes', nowHHMM, null);
+        await logStep(db, 'etfSignalOutcomes', todayAd, nowHHMM, null);
       } catch (e) {
         console.error('[cron] ETF訊號勝率追蹤失敗：', e.message);
-        await logStep(db, 'etfSignalOutcomes', nowHHMM, e.message);
+        await logStep(db, 'etfSignalOutcomes', todayAd, nowHHMM, e.message);
       }
       return;
     }
@@ -1184,14 +1188,14 @@ export default {
           if (prev != null && Math.abs(raw - prev) / prev > MAX_TAIEX_DAILY_CHANGE_RATIO) {
             const msg = `加權指數收盤價 ${raw} 與前一筆有效值 ${prev} 差異達 ${((Math.abs(raw - prev) / prev) * 100).toFixed(1)}%，超過合理範圍，懷疑來源資料異常（TWSE 端點已知會偶發回傳看似正常但錯誤的資料），本次不採用，當日欄位保留 NULL`;
             console.error(`[cron] ${msg}`);
-            await logStep(db, 'taiexClose', nowHHMM, msg);
+            await logStep(db, 'taiexClose', todayAd, nowHHMM, msg);
           } else {
             dayData.taiex_close = raw;
-            await logStep(db, 'taiexClose', nowHHMM, null);
+            await logStep(db, 'taiexClose', todayAd, nowHHMM, null);
           }
         } catch (e) {
           console.error('[cron] 取得加權指數失敗：', e.message);
-          await logStep(db, 'taiexClose', nowHHMM, e.message);
+          await logStep(db, 'taiexClose', todayAd, nowHHMM, e.message);
         }
       })(),
 
@@ -1200,20 +1204,20 @@ export default {
           const ad = await fetchAdvanceDecline();
           dayData.advancers = ad.advancers;
           dayData.decliners = ad.decliners;
-          await logStep(db, 'advanceDecline', nowHHMM, null);
+          await logStep(db, 'advanceDecline', todayAd, nowHHMM, null);
         } catch (e) {
           console.error('[cron] 取得漲跌家數失敗：', e.message);
-          await logStep(db, 'advanceDecline', nowHHMM, e.message);
+          await logStep(db, 'advanceDecline', todayAd, nowHHMM, e.message);
         }
       })(),
 
       (async () => {
         try {
           dayData.margin_balance_total = await fetchMarginTotal();
-          await logStep(db, 'marginTotal', nowHHMM, null);
+          await logStep(db, 'marginTotal', todayAd, nowHHMM, null);
         } catch (e) {
           console.error('[cron] 取得全市場融資餘額失敗：', e.message);
-          await logStep(db, 'marginTotal', nowHHMM, e.message);
+          await logStep(db, 'marginTotal', todayAd, nowHHMM, e.message);
         }
       })(),
 
@@ -1222,10 +1226,10 @@ export default {
           const inst = await fetchInstitutionalCounts(todayAd);
           dayData.inst_net_buy_count = inst.buyCount;
           dayData.inst_net_sell_count = inst.sellCount;
-          await logStep(db, 'institutionalCounts', nowHHMM, null);
+          await logStep(db, 'institutionalCounts', todayAd, nowHHMM, null);
         } catch (e) {
           console.error('[cron] 取得三大法人買賣超家數失敗：', e.message);
-          await logStep(db, 'institutionalCounts', nowHHMM, e.message);
+          await logStep(db, 'institutionalCounts', todayAd, nowHHMM, e.message);
         }
       })(),
 
@@ -1237,10 +1241,10 @@ export default {
           const { newHighs, newLows } = await updateStockPricesAndCountNewHighLow(db, todayAd, mergedRows);
           dayData.new_highs = newHighs;
           dayData.new_lows = newLows;
-          await logStep(db, 'stockDayAllNewHighLow', nowHHMM, null);
+          await logStep(db, 'stockDayAllNewHighLow', todayAd, nowHHMM, null);
         } catch (e) {
           console.error('[cron] 更新個股價格/計算創新高低失敗：', e.message);
-          await logStep(db, 'stockDayAllNewHighLow', nowHHMM, e.message);
+          await logStep(db, 'stockDayAllNewHighLow', todayAd, nowHHMM, e.message);
           return; // screener需要今天的股價資料，這步都失敗了就不用往下試
         }
         // screener依賴上面剛寫進stock_daily_price的今日收盤/成交量，必須在同一個任務裡
@@ -1248,10 +1252,10 @@ export default {
         try {
           const screener = await computeScreenerSignals(db, todayAd);
           console.log(`[cron] RSI超賣/超買+量暴增篩選器：共 ${screener.count} 檔符合（超賣 ${screener.oversoldCount}、超買 ${screener.overboughtCount}）`);
-          await logStep(db, 'screener', nowHHMM, null);
+          await logStep(db, 'screener', todayAd, nowHHMM, null);
         } catch (e) {
           console.error('[cron] 計算RSI超賣/超買+量暴增篩選器失敗：', e.message);
-          await logStep(db, 'screener', nowHHMM, e.message);
+          await logStep(db, 'screener', todayAd, nowHHMM, e.message);
         }
       })(),
 
@@ -1267,40 +1271,40 @@ export default {
             .filter(h => h.date !== todayAd)
             .map(h => db.prepare('UPDATE daily_market_data SET put_call_ratio = ? WHERE date = ? AND put_call_ratio IS NULL').bind(h.ratio, h.date));
           if (backfillStatements.length) await batchRun(db, backfillStatements);
-          await logStep(db, 'putCallRatio', nowHHMM, null);
+          await logStep(db, 'putCallRatio', todayAd, nowHHMM, null);
         } catch (e) {
           console.error('[cron] 取得臺指選擇權Put/Call比失敗：', e.message);
-          await logStep(db, 'putCallRatio', nowHHMM, e.message);
+          await logStep(db, 'putCallRatio', todayAd, nowHHMM, e.message);
         }
       })(),
 
       (async () => {
         try {
           dayData.vixtwn = await fetchVixTwn(todayAd);
-          await logStep(db, 'vixtwn', nowHHMM, null);
+          await logStep(db, 'vixtwn', todayAd, nowHHMM, null);
         } catch (e) {
           console.error('[cron] 取得VIXTWN失敗：', e.message);
-          await logStep(db, 'vixtwn', nowHHMM, e.message);
+          await logStep(db, 'vixtwn', todayAd, nowHHMM, e.message);
         }
       })(),
 
       (async () => {
         try {
           dayData.govbond_10y_yield = await fetchUsTreasuryYield();
-          await logStep(db, 'usTreasuryYield', nowHHMM, null);
+          await logStep(db, 'usTreasuryYield', todayAd, nowHHMM, null);
         } catch (e) {
           console.error('[cron] 取得美國10年期公債殖利率失敗：', e.message);
-          await logStep(db, 'usTreasuryYield', nowHHMM, e.message);
+          await logStep(db, 'usTreasuryYield', todayAd, nowHHMM, e.message);
         }
       })(),
 
       (async () => {
         try {
           dayData.corp_bond_spread = await fetchCreditRiskAppetiteRatio();
-          await logStep(db, 'creditRiskAppetiteRatio', nowHHMM, null);
+          await logStep(db, 'creditRiskAppetiteRatio', todayAd, nowHHMM, null);
         } catch (e) {
           console.error('[cron] 取得HYG/LQD信用風險偏好比值失敗：', e.message);
-          await logStep(db, 'creditRiskAppetiteRatio', nowHHMM, e.message);
+          await logStep(db, 'creditRiskAppetiteRatio', todayAd, nowHHMM, e.message);
         }
       })(),
 
@@ -1311,10 +1315,10 @@ export default {
         try {
           const result = await backfillUsBondIndicators(db);
           console.log(`[cron] 美股公債/信用指標歷史回補：殖利率${result.tnxDays}天、信用比值${result.ratioDays}天`);
-          await logStep(db, 'usBondIndicatorsBackfill', nowHHMM, null);
+          await logStep(db, 'usBondIndicatorsBackfill', todayAd, nowHHMM, null);
         } catch (e) {
           console.error('[cron] 美股公債/信用指標歷史回補失敗：', e.message);
-          await logStep(db, 'usBondIndicatorsBackfill', nowHHMM, e.message);
+          await logStep(db, 'usBondIndicatorsBackfill', todayAd, nowHHMM, e.message);
         }
       })(),
     ]);
@@ -1332,13 +1336,19 @@ export default {
         nowHHMM
       ).run();
       console.log(`[cron] daily_market_data 寫入完成（台北時間 ${nowHHMM}）：`, JSON.stringify(dayData));
+      await logStep(db, 'dailyMarketDataWrite', todayAd, nowHHMM, null);
     } catch (e) {
       console.error('[cron] 寫入 daily_market_data 失敗：', e.message);
+      await logStep(db, 'dailyMarketDataWrite', todayAd, nowHHMM, e.message);
     }
 
     try {
       const holderResult = await updateHolderSnapshotIfNewWeek(db);
       console.log('[cron] holder_weekly_snapshot：', JSON.stringify(holderResult));
-    } catch (e) { console.error('[cron] 更新大戶持股週快照失敗：', e.message); }
+      await logStep(db, 'holderWeeklySnapshot', todayAd, nowHHMM, null);
+    } catch (e) {
+      console.error('[cron] 更新大戶持股週快照失敗：', e.message);
+      await logStep(db, 'holderWeeklySnapshot', todayAd, nowHHMM, e.message);
+    }
   },
 };
