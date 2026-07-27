@@ -492,6 +492,18 @@ async function updateHolderSnapshotIfNewWeek(db) {
   return { skipped: false, date: tdccDate, stockCount: perCode.size };
 }
 
+// 各投信回傳的持股基準日格式不一（YYYY/MM/DD、YYYY-MM-DD、YYYYMMDD、帶時間戳記的ISO字串），
+// 統一轉成YYYY-MM-DD；抓不到合法日期就回傳null，不要編一個假日期出來。
+function normalizeAsOfDate(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  let m = s.match(/^(\d{4})[-/](\d{2})[-/](\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = s.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  return null;
+}
+
 // ezmoney.com.tw（統一投信官網）對第一次沒帶到反爬蟲 cookie 的請求，永遠回傳 302 重新導向
 // 回同一個網址、並在 Set-Cookie 帶一組 __nxquid——實測用這組 cookie 重打一次就能拿到完整內容，
 // 不需要更複雜的挑戰。頁面裡完整持股是用 HTML-escape 包住的一段 JSON 陣列（Nuxt SSR 資料），
@@ -524,9 +536,10 @@ async function fetchEzmoneyHoldings(fundCode) {
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
     .replace(/&amp;/g, '&');
   const data = JSON.parse(unescaped);
-  return data
-    .filter(r => r.AssetCode === 'ST' && r.DetailCode)
-    .map(r => ({ stockCode: r.DetailCode, stockName: r.DetailName, shares: r.Share, weight: r.NavRate }));
+  const stItems = data.filter(r => r.AssetCode === 'ST' && r.DetailCode);
+  const holdings = stItems.map(r => ({ stockCode: r.DetailCode, stockName: r.DetailName, shares: r.Share, weight: r.NavRate }));
+  holdings.asOfDate = normalizeAsOfDate(stItems[0]?.TranDate);
+  return holdings;
 }
 
 // 野村投信官網（Angular SPA）背後直接打的 JSON API，不用解析 HTML。
@@ -544,12 +557,14 @@ async function fetchNomuraHoldings(fundId) {
   const apiRes = await res.json();
   const table = (apiRes?.Entries?.Data?.Table || []).find(t => t.TableTitle === '股票');
   if (!table || !Array.isArray(table.Rows)) throw new Error('野村投信 API 回應格式跟預期不符（找不到股票表格）');
-  return table.Rows.map(row => ({
+  const holdings = table.Rows.map(row => ({
     stockCode: row[0],
     stockName: row[1],
     shares: parseFloat(String(row[2]).replace(/,/g, '')),
     weight: parseFloat(row[3]),
   }));
+  holdings.asOfDate = normalizeAsOfDate(apiRes?.Entries?.Data?.FundAsset?.NavDate);
+  return holdings;
 }
 
 // 解碼 HTML entity（十六進位/十進位數字實體 + 常見具名實體），Workers 環境沒有 DOM 可用。
@@ -593,7 +608,10 @@ async function fetchFubonHoldings(ticker) {
   const html = await res.text();
   const rows = [...html.matchAll(/<tr>\s*<td class="tac">(\d{4,6})<\/td>\s*<td>([^<]+)<\/td>\s*<td class="tac">([\d,]+)<\/td>\s*<td class="tac">[\d,]+<\/td>\s*<td class="tac">([\d.]+)<\/td>\s*<\/tr>/g)];
   if (rows.length === 0) throw new Error('富邦投信頁面內找不到持股表格（版面可能已變更）');
-  return rows.map(m => ({ stockCode: m[1], stockName: m[2].trim(), shares: parseFloat(m[3].replace(/,/g, '')), weight: parseFloat(m[4]) }));
+  const holdings = rows.map(m => ({ stockCode: m[1], stockName: m[2].trim(), shares: parseFloat(m[3].replace(/,/g, '')), weight: parseFloat(m[4]) }));
+  const dateMatch = html.match(/資料日期[：:]\s*(\d{4}\/\d{2}\/\d{2})/);
+  holdings.asOfDate = dateMatch ? normalizeAsOfDate(dateMatch[1]) : null;
+  return holdings;
 }
 
 // 安聯投信（etf.allianzgi.com.tw）背後是共用的白牌 ETF 平台，需要三步：
@@ -624,10 +642,15 @@ async function fetchAllianzHoldings(fundNo) {
   const table = (apiRes?.Entries?.Data?.Table || []).find(t => (t.TableTitle || '').includes('股票'));
   if (!table || !Array.isArray(table.Rows)) throw new Error('安聯投信 API 回應格式跟預期不符（找不到股票表格）');
   // Rows 是 [序號, 代號, 名稱, 股數, 權重%]，比野村/凱基多一欄序號。
-  return table.Rows.map(row => ({
+  const holdings = table.Rows.map(row => ({
     stockCode: row[1], stockName: row[2],
     shares: parseFloat(String(row[3]).replace(/,/g, '')), weight: parseFloat(row[4]),
   })).filter(h => h.stockCode);
+  // FundAsset同時有NavDate（淨值計算日）跟PCFDate（持股組成檔基準日）兩個欄位，實測過
+  // 這兩個常常不是同一天——這裡要的是「持股」的基準日，優先用PCFDate，NavDate只當備援。
+  const fa = apiRes?.Entries?.Data?.FundAsset;
+  holdings.asOfDate = normalizeAsOfDate(fa?.PCFDate) || normalizeAsOfDate(fa?.NavDate);
+  return holdings;
 }
 
 // 台新投信：純伺服器渲染 HTML，不用 cookie/登入。股票代號可能帶交易所後綴（如「2330 TT」
@@ -646,13 +669,17 @@ async function fetchTaishinHoldings(ticker) {
   const tableEnd = html.indexOf('</table>', markerIdx) + '</table>'.length;
   const tableHtml = html.slice(tableStart, tableEnd);
   const rows = [...tableHtml.matchAll(/<tr>\s*<td>([^<]+)<\/td>\s*<td>([^<]+)<\/td>\s*<td>([^<]+)<\/td>\s*<td>([^<]+)<\/td>\s*<\/tr>/g)];
-  return rows
+  const holdings = rows
     .map(m => ({ rawCode: m[1].trim(), stockName: m[2].trim(), shares: parseFloat(m[3].replace(/,/g, '')), weight: parseFloat(m[4]) }))
     .filter(h => !h.rawCode.includes('合計'))
     .map(h => {
       const twMatch = h.rawCode.match(/^(\d{4,6})\s*TT$/i);
       return { stockCode: twMatch ? twMatch[1] : h.rawCode, stockName: h.stockName, shares: h.shares, weight: h.weight };
     });
+  // 頁面有個隱藏欄位id="MAX_DATE"，是這個頁面資料能查到的最新日期，實測跟持股表格是同一份資料。
+  const dateMatch = html.match(/id="MAX_DATE"[^>]*value="(\d{4}-\d{2}-\d{2})"/);
+  holdings.asOfDate = dateMatch ? normalizeAsOfDate(dateMatch[1]) : null;
+  return holdings;
 }
 
 // 聯博投信（全球共用平台 webapi.alliancebernstein.com），乾淨的公開 JSON API，不用任何
@@ -711,10 +738,13 @@ async function fetchCtbcHoldings(fid) {
   const detail = apiRes?.Data?.FundAssetsDetail || [];
   const stockSection = detail.find(s => s.Code === 'STOCK');
   if (!stockSection) throw new Error('中信投信 API 回應格式跟預期不符（找不到股票區塊）');
-  return stockSection.Data.map(r => ({
+  const holdings = stockSection.Data.map(r => ({
     stockCode: r.code_, stockName: r.name_,
     shares: parseFloat(String(r.qty_).replace(/,/g, '')), weight: parseFloat(r.weights_),
   }));
+  const fundAssets = apiRes?.Data?.FundAssets?.[0];
+  holdings.asOfDate = normalizeAsOfDate(fundAssets?.['資料日期']) || normalizeAsOfDate(fundAssets?.NAV_DT);
+  return holdings;
 }
 
 // 第一金投信（fsitc.com.tw）：ASP.NET WebMethod，POST body 不帶 pStrDate（空字串）就是回傳
@@ -729,9 +759,11 @@ async function fetchFirstHoldings(fundId) {
   if (!res.ok) throw new Error(`第一金投信 HTTP ${res.status}`);
   const outer = await res.json();
   const data = JSON.parse(outer.d);
-  return data
-    .filter(r => r.group === '1')
+  const stockRows = data.filter(r => r.group === '1');
+  const holdings = stockRows
     .map(r => ({ stockCode: r.A, stockName: r.B, weight: parseFloat(r.C), shares: parseFloat(String(r.D).replace(/,/g, '')) }));
+  holdings.asOfDate = normalizeAsOfDate(stockRows[0]?.sdate);
+  return holdings;
 }
 
 // 國泰投信（cwapi.cathaysite.com.tw）擋在 Akamai 後面，但只要有像瀏覽器的 User-Agent 就會放行，
@@ -777,6 +809,7 @@ async function fetchCathayHoldings(fundCode) {
   })).filter(h => h.stockCode && isFinite(h.weight));
 
   if (stockValue != null) holdings.stockValue = stockValue;
+  holdings.asOfDate = settledDate; // 已經是YYYY-MM-DD，且已經驗證過是「最新已結算日」，不用再normalize
   return holdings;
 }
 
@@ -796,10 +829,14 @@ async function fetchCapitalHoldings(fundId) {
   const apiRes = await res.json();
   const stocks = apiRes?.data?.stocks;
   if (apiRes.code !== 200 || !Array.isArray(stocks)) throw new Error(`群益投信 API 回應格式跟預期不符：${JSON.stringify(apiRes).slice(0, 200)}`);
-  return stocks.map(s => ({
+  const holdings = stocks.map(s => ({
     stockCode: s.stocNo, stockName: (s.stocName || '').trim(),
     shares: s.share != null ? Math.round(s.share) : null, weight: s.weight,
   })).filter(h => h.stockCode && isFinite(h.weight));
+  // pcf.date1/date2實測是兩個不同日期（date1常是往後一天），date2才是跟持股權重同一份快照
+  // 標示的日期。
+  holdings.asOfDate = normalizeAsOfDate(apiRes?.data?.pcf?.date2);
+  return holdings;
 }
 
 // 兆豐投信（megafunds.com.tw）：純伺服器渲染 HTML，不用 cookie/登入，完整持股表格（52檔）
@@ -814,7 +851,10 @@ async function fetchMegaHoldings(id) {
   const html = await res.text();
   const rows = [...html.matchAll(/<div class="fund-info content-list-1">\s*<div class="fund-content">(\d{4,6})<\/div>\s*<div class="fund-content">([^<]+)<\/div>\s*<div class="fund-content txt-right">([\d,]+)<\/div>\s*<div class="fund-content txt-right">([\d.]+)\s*%<\/div>\s*<\/div>/g)];
   if (rows.length === 0) throw new Error('兆豐投信頁面內找不到持股表格（版面可能已變更）');
-  return rows.map(m => ({ stockCode: m[1], stockName: m[2].trim(), shares: parseFloat(m[3].replace(/,/g, '')), weight: parseFloat(m[4]) }));
+  const holdings = rows.map(m => ({ stockCode: m[1], stockName: m[2].trim(), shares: parseFloat(m[3].replace(/,/g, '')), weight: parseFloat(m[4]) }));
+  const dateMatch = html.match(/資料來源：兆豐投信，(\d{4}\/\d{2}\/\d{2})/);
+  holdings.asOfDate = dateMatch ? normalizeAsOfDate(dateMatch[1]) : null;
+  return holdings;
 }
 
 // 元大投信（etfapi.yuantaetfs.com）：乾淨的公開 JSON API，不用 cookie/登入/任何 header。
@@ -828,10 +868,14 @@ async function fetchYuantaHoldings(ticker) {
   const apiRes = await res.json();
   const rows = apiRes?.FundWeights?.StockWeights;
   if (!Array.isArray(rows) || rows.length === 0) throw new Error('元大投信 API 回應格式跟預期不符（找不到 FundWeights.StockWeights）');
-  return rows.map(r => ({
+  const holdings = rows.map(r => ({
     stockCode: r.code, stockName: (r.name || '').trim(),
     shares: r.qty != null ? Math.round(r.qty) : null, weight: r.weights,
   })).filter(h => h.stockCode && isFinite(h.weight));
+  // PCF.trandate是持股對應的交易日（YYYYMMDD），跟upddate（系統更新時間戳）、anndate
+  // （公告日，通常是未來日期）是三個不同概念，持股要用trandate。
+  holdings.asOfDate = normalizeAsOfDate(apiRes?.PCF?.trandate);
+  return holdings;
 }
 
 // 摩根投信（am.jpmorgan.com）：乾淨的公開 JSON API，不用 cookie/登入。之前以為要解析 XLSX
@@ -845,12 +889,15 @@ async function fetchJpmorganHoldings(cusip) {
   });
   if (!res.ok) throw new Error(`摩根投信 API HTTP ${res.status}`);
   const apiRes = await res.json();
-  const rows = apiRes?.fundData?.holdings?.pcfEquityHoldings?.data;
+  const pcfEquityHoldings = apiRes?.fundData?.holdings?.pcfEquityHoldings;
+  const rows = pcfEquityHoldings?.data;
   if (!Array.isArray(rows) || rows.length === 0) throw new Error('摩根投信 API 回應格式跟預期不符（找不到 pcfEquityHoldings.data）');
-  return rows.map(r => ({
+  const holdings = rows.map(r => ({
     stockCode: r.securityTicker, stockName: (r.securityDescription || '').trim(),
     shares: r.shares != null ? Math.round(r.shares) : null, weight: r.marketValuePercent,
   })).filter(h => h.stockCode && isFinite(h.weight));
+  holdings.asOfDate = normalizeAsOfDate(pcfEquityHoldings?.effectiveDate);
+  return holdings;
 }
 
 // 復華投信官網（Nuxt/Vue前端）背後直接打的JSON API，不用解析HTML。qDate是必填參數，
@@ -866,7 +913,7 @@ async function fetchFuhwaHoldings(fundId) {
   const fund = apiRes?.result?.[0];
   const rows = fund?.detail;
   if (!Array.isArray(rows)) throw new Error('復華投信 API 回應格式跟預期不符（找不到 result[0].detail，可能今天還沒公布或qDate格式錯誤）');
-  return rows
+  const holdings = rows
     .filter(r => r.ftype === '股票' && r.stockid)
     .map(r => ({
       stockCode: r.stockid,
@@ -874,6 +921,10 @@ async function fetchFuhwaHoldings(fundId) {
       shares: parseNum(r.qshare),
       weight: parseNum(String(r.prate_addaccint || '').replace('%', '')),
     }));
+  // dDate是API實際回應的資料日期——雖然這支API要求qDate完全match才有回應（等於一定跟
+  // qDate一樣），但直接讀取回應本身的欄位比假設「跟請求參數一定相等」更可靠、更誠實。
+  holdings.asOfDate = normalizeAsOfDate(fund?.dDate);
+  return holdings;
 }
 
 async function fetchAndStoreActiveEtfHoldings(db, todayDash) {
@@ -958,6 +1009,9 @@ async function fetchAndStoreActiveEtfHoldings(db, todayDash) {
           return weightOk && sharesOk;
         });
         if (rawHoldings.stockValue != null) holdings.stockValue = rawHoldings.stockValue;
+        // .filter()會產生新陣列、原本掛在rawHoldings上的.asOfDate不會自動帶過來，要手動搬過去
+        // （跟上面stockValue的搬法一樣）。13家有回傳基準日，凱基/聯博沒有來源就是undefined→null。
+        const asOfDate = rawHoldings.asOfDate ?? null;
         if (holdings.length < rawHoldings.length) {
           console.error(`[cron-etf] ${etf.code} (${etf.source})：${rawHoldings.length - holdings.length}/${rawHoldings.length} 筆持股資料weight/shares不合理，已濾掉不寫入`);
         }
@@ -972,12 +1026,12 @@ async function fetchAndStoreActiveEtfHoldings(db, todayDash) {
 
         const statements = holdings.map(h =>
           db.prepare(
-            'INSERT OR REPLACE INTO active_etf_holdings (etf_code, etf_name, stock_code, date, shares, weight) VALUES (?, ?, ?, ?, ?, ?)'
-          ).bind(etf.code, etf.name, h.stockCode, todayDash, h.shares, h.weight)
+            'INSERT OR REPLACE INTO active_etf_holdings (etf_code, etf_name, stock_code, date, shares, weight, source_as_of_date) VALUES (?, ?, ?, ?, ?, ?, ?)'
+          ).bind(etf.code, etf.name, h.stockCode, todayDash, h.shares, h.weight, asOfDate)
         );
 
         await db.batch(statements);
-        console.log(`[cron-etf] successfully stored ${holdings.length} holdings for ${etf.code} (${etf.source}) on ${todayDash}`);
+        console.log(`[cron-etf] successfully stored ${holdings.length} holdings for ${etf.code} (${etf.source}) on ${todayDash}（來源基準日：${asOfDate || '無'}）`);
       } catch (e) {
         console.error(`[cron-etf] Error crawling ${etf.code} (${etf.source}):`, e.message);
         failedCodes.push(etf.code);

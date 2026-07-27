@@ -142,15 +142,18 @@ export async function onRequestGet(context) {
       if (isEtf) {
         const etfCode = cleanSymbol;
         const querySql = yesterdayDate
-          ? 'SELECT stock_code, shares, weight, date, etf_name FROM active_etf_holdings WHERE etf_code = ? AND date IN (?, ?)'
-          : 'SELECT stock_code, shares, weight, date, etf_name FROM active_etf_holdings WHERE etf_code = ? AND date = ?';
-        
+          ? 'SELECT stock_code, shares, weight, date, etf_name, source_as_of_date FROM active_etf_holdings WHERE etf_code = ? AND date IN (?, ?)'
+          : 'SELECT stock_code, shares, weight, date, etf_name, source_as_of_date FROM active_etf_holdings WHERE etf_code = ? AND date = ?';
+
         const bindings = yesterdayDate ? [etfCode, todayDate, yesterdayDate] : [etfCode, todayDate];
         const records = await env.ELAN_QUANT_DB.prepare(querySql).bind(...bindings).all();
         const list = records.results || [];
-        
+
         const etfHasYesterday = etfsWithYesterdayData.has(etfCode);
         const etfName = list[0]?.etf_name || '主動式 ETF';
+        // 同一檔ETF同一天的所有列，source_as_of_date都是同一個值（同一次爬蟲寫入的），
+        // 從今天那筆任取一筆代表整個ETF的基準日就好，不用逐檔股票查一次。
+        const etfAsOfDate = list.find(r => r.date === todayDate)?.source_as_of_date || null;
         const stockMap = {};
         for (const r of list) {
           if (!stockMap[r.stock_code]) {
@@ -226,6 +229,7 @@ export async function onRequestGet(context) {
           isEtf: true,
           etfCode,
           etfName,
+          etfAsOfDate, // 這檔基金網站/API自己回報的持股基準日，可能跟上面的date不同天，也可能是null（無來源）
           flow: etfHasYesterday ? flow.filter(hasFlowSignal) : flow
         });
       }
@@ -244,8 +248,8 @@ export async function onRequestGet(context) {
 
       // Query database for this stock on these dates
       const querySql = yesterdayDate
-        ? 'SELECT etf_code, etf_name, shares, weight, date FROM active_etf_holdings WHERE stock_code = ? AND date IN (?, ?)'
-        : 'SELECT etf_code, etf_name, shares, weight, date FROM active_etf_holdings WHERE stock_code = ? AND date = ?';
+        ? 'SELECT etf_code, etf_name, shares, weight, date, source_as_of_date FROM active_etf_holdings WHERE stock_code = ? AND date IN (?, ?)'
+        : 'SELECT etf_code, etf_name, shares, weight, date, source_as_of_date FROM active_etf_holdings WHERE stock_code = ? AND date = ?';
       
       const bindings = yesterdayDate ? [stockCode, todayDate, yesterdayDate] : [stockCode, todayDate];
       const records = await env.ELAN_QUANT_DB.prepare(querySql).bind(...bindings).all();
@@ -298,6 +302,7 @@ export async function onRequestGet(context) {
           action,
           shares: t ? t.shares : 0,
           weight: t ? t.weight : 0,
+          sourceAsOfDate: t?.source_as_of_date || null, // 這家投信自己回報的持股基準日，不同ETF可能不一樣天
           changeShares,
           changeWeight,
           changeAmount,
@@ -319,12 +324,30 @@ export async function onRequestGet(context) {
 
     // IF symbol is NOT specified: return market-wide rankings (Option B)
     const allQuery = yesterdayDate
-      ? 'SELECT etf_code, etf_name, stock_code, shares, weight, date FROM active_etf_holdings WHERE date IN (?, ?)'
-      : 'SELECT etf_code, etf_name, stock_code, shares, weight, date FROM active_etf_holdings WHERE date = ?';
-    
+      ? 'SELECT etf_code, etf_name, stock_code, shares, weight, date, source_as_of_date FROM active_etf_holdings WHERE date IN (?, ?)'
+      : 'SELECT etf_code, etf_name, stock_code, shares, weight, date, source_as_of_date FROM active_etf_holdings WHERE date = ?';
+
     const allBindings = yesterdayDate ? [todayDate, yesterdayDate] : [todayDate];
     const allRecords = await env.ELAN_QUANT_DB.prepare(allQuery).bind(...allBindings).all();
     const recordsList = allRecords.results || [];
+
+    // 使用者質疑「更新日期」只是我們抓取的時間，不是每家投信真正的持股基準日——這裡把
+    // 「今天」這批資料裡，各家投信自己回報的基準日算成一個範圍（min~max）+ 有幾家完全沒有
+    // 基準日可查，讓前端能誠實呈現「這27檔基金不完全是同一天的部位」，不是隱藏起來裝作
+    // 全部同步。用Set先去重（同一檔ETF今天所有列的source_as_of_date都一樣，不用逐列算）。
+    const todayEtfAsOfDates = new Map(); // etf_code -> source_as_of_date（可能是null）
+    for (const r of recordsList) {
+      if (r.date === todayDate && !todayEtfAsOfDates.has(r.etf_code)) {
+        todayEtfAsOfDates.set(r.etf_code, r.source_as_of_date || null);
+      }
+    }
+    const knownAsOfDates = [...todayEtfAsOfDates.values()].filter(Boolean).sort();
+    const asOfDateSummary = {
+      min: knownAsOfDates[0] || null,
+      max: knownAsOfDates[knownAsOfDates.length - 1] || null,
+      knownCount: knownAsOfDates.length,
+      totalCount: todayEtfAsOfDates.size,
+    };
 
     // Group by (etf_code, stock_code) — skip any ETF that has no yesterday-dated rows at all
     // (e.g. just switched data source, or a one-off cron failure) so it doesn't get diffed
@@ -420,6 +443,7 @@ export async function onRequestGet(context) {
       date: todayDate,
       comparedTo: yesterdayDate,
       days,
+      asOfDateSummary, // 各基金自己回報的持股基準日範圍，可能跟date不同天，見上方註解
       rankings: { buys, sells }
     };
     // 首頁ETF排行卡片只用這個「無symbol」的市場全體分支，個股查詢（有symbol）先不加快照——

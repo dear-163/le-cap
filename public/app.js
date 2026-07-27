@@ -1723,6 +1723,28 @@ function setActiveEtfRankingsDays(days, btnEl) {
   loadActiveEtfRankings(days);
 }
 
+// 使用者質疑「更新日期」只是本站抓取的時間，不代表27檔基金的持股真的是同一天的部位——
+// 查證後發現15家發行公司裡13家的網站/API自己會回報真正的基準日，且常常不是同一天（例如
+// 安聯NavDate/PCFDate本身就不一致），另外2家（凱基、聯博）目前完全沒有可用來源。這裡誠實
+// 呈現這個「不是每家都同步」的事實，而不是用單一「更新日期」暗示所有基金都是同一天。
+function renderActiveEtfAsOfSummary(summary) {
+  const el = document.getElementById('activeEtfAsOfSummary');
+  if (!el) return;
+  if (!summary || summary.totalCount === 0) { el.innerHTML = ''; return; }
+  const { min, max, knownCount, totalCount } = summary;
+  const missingCount = totalCount - knownCount;
+  let rangeText;
+  if (knownCount === 0) {
+    rangeText = '各基金持股基準日暫無法查證';
+  } else if (min === max) {
+    rangeText = `各基金持股基準日：${escapeHtml(min)}`;
+  } else {
+    rangeText = `各基金持股基準日：${escapeHtml(min)} ~ ${escapeHtml(max)}（不是所有基金都同一天）`;
+  }
+  const missingNote = missingCount > 0 ? `，另有 ${missingCount} 檔基金的來源網站沒有提供基準日` : '';
+  el.textContent = `ⓘ ${rangeText}${missingNote}`;
+}
+
 async function loadActiveEtfRankings(days = 1) {
   try {
     const res = await fetch(`/api/active-etf-flow?days=${days}&t=` + Date.now());
@@ -1739,6 +1761,7 @@ async function loadActiveEtfRankings(days = 1) {
       // 明確告知原因，不要留著前一個視窗的數字造成誤會。
       if (days === 1) return;
       document.getElementById('activeEtfRankingsDate').innerHTML = staleNoteHtml(date, data.stale);
+      renderActiveEtfAsOfSummary(data.asOfDateSummary);
       document.getElementById('activeEtfTopBuys').innerHTML = '<div style="color:var(--text3); text-align:center;">資料累積中，還沒有足夠的揭露日歷史可比較</div>';
       document.getElementById('activeEtfTopSells').innerHTML = '<div style="color:var(--text3); text-align:center;">資料累積中，還沒有足夠的揭露日歷史可比較</div>';
       document.getElementById('activeEtfRankings').style.display = 'block';
@@ -1754,6 +1777,7 @@ async function loadActiveEtfRankings(days = 1) {
     };
 
     document.getElementById('activeEtfRankingsDate').innerHTML = staleNoteHtml(date, data.stale);
+    renderActiveEtfAsOfSummary(data.asOfDateSummary);
 
     // etfCount：幾檔不同基金「獨立」對這支股票同方向加減碼，跟總金額是不同的訊號（一堆
     // 小基金各自小買，總金額不一定大，但代表操盤共識度高）——只有 >=2 才顯示，1家沒有

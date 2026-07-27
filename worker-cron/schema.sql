@@ -67,9 +67,14 @@ CREATE TABLE IF NOT EXISTS active_etf_holdings (
   etf_code TEXT NOT NULL,
   etf_name TEXT NOT NULL,
   stock_code TEXT NOT NULL,       -- 例如 2330
-  date TEXT NOT NULL,             -- 資料日期（YYYY-MM-DD 或 YYYYMMDD，統一使用 YYYY-MM-DD 格式）
+  date TEXT NOT NULL,             -- 我們抓取當下的日期（YYYY-MM-DD 或 YYYYMMDD，統一使用 YYYY-MM-DD 格式）
+                                    -- ——不是投信實際揭露持股的基準日，見 source_as_of_date
   shares INTEGER,                 -- 持股股數（來源不揭露股數時為 NULL）
   weight REAL NOT NULL,           -- 持股比重（百分比，如 5.34 表示 5.34%）
+  source_as_of_date TEXT,         -- 投信網站/API自己回報的持股基準日（YYYY-MM-DD），15家裡13家
+                                    -- 抓得到、凱基/聯博目前沒有可用來源故為NULL。跟date常常不同一天
+                                    -- （實測安聯NavDate跟PCFDate就不一致，元大/摩根/富邦有結構性
+                                    -- 揭露延遲），不能假設兩者相等。
   PRIMARY KEY (etf_code, stock_code, date)
 );
 CREATE INDEX IF NOT EXISTS idx_active_etf_holdings_stock_date ON active_etf_holdings(stock_code, date);
