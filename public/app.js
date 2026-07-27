@@ -491,6 +491,11 @@ function renderTech(symbol,data,info){
     <div class="kpi"><div class="kpi-label">52週高</div><div class="kpi-val down">${typeof h52==='number'?fmt(h52):h52}</div></div>
     <div class="kpi"><div class="kpi-label">52週低</div><div class="kpi-val up">${typeof l52==='number'?fmt(l52):l52}</div></div>
   </div>
+  ${(info.analystHistory&&info.analystHistory.length)?`
+  <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border);font-size:11px;color:var(--text3);">
+    <div style="margin-bottom:4px;color:var(--text2);">最近分析師評等異動（Yahoo彙整各券商實際發布的評等，不是本站推算）：</div>
+    ${info.analystHistory.map(h=>`<div style="padding:2px 0;">${escapeHtml(h.firm)}${h.fromGrade&&h.toGrade&&h.fromGrade!==h.toGrade?`：${escapeHtml(h.fromGrade)} → ${escapeHtml(h.toGrade)}`:h.toGrade?`：${escapeHtml(h.toGrade)}`:''}${h.priceTarget?`（目標價 ${h.priceTarget}）`:''}${h.date?` · ${escapeHtml(h.date)}`:''}</div>`).join('')}
+  </div>`:''}
 </div>`;
 
   document.getElementById('signalBarBox').innerHTML=`
