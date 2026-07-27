@@ -324,11 +324,10 @@ async function fetchFmpInfo(symbol, base, fmpKey) {
 async function fetchYahooQuoteSummary(symbol, base, env) {
   const auth = await getYahooCrumb(env);
   if (!auth) return null;
-  const summaryModules = 'price,summaryDetail,defaultKeyStatistics,financialData,assetProfile,upgradeDowngradeHistory';
-  // Yahoo quoteSummary通常把數值包成{raw,fmt,longFmt}，但少數欄位（例如冷門標的的
-  // numberOfAnalystOpinions）沒有分析師覆蓋時，Yahoo回傳的是不含raw鍵的空物件{}而不是
-  // null/缺欄位——這種情況要當成「沒有值」處理，不能把整個物件原樣傳出去，不然前端把
-  // 它跟字串相加會顯示成"[object Object]"。
+  const summaryModules = 'price,summaryDetail,defaultKeyStatistics,financialData,assetProfile';
+  // Yahoo quoteSummary通常把數值包成{raw,fmt,longFmt}，但少數欄位在沒有資料時，Yahoo
+  // 回傳的是不含raw鍵的空物件{}而不是null/缺欄位——這種情況要當成「沒有值」處理，不能把
+  // 整個物件原樣傳出去，不然前端把它跟字串相加會顯示成"[object Object]"。
   const unwrap = v => (v && typeof v === 'object') ? (('raw' in v) ? v.raw : null) : v;
   for (const ver of ['v10', 'v11']) {
     for (const host of ['query1.finance.yahoo.com', 'query2.finance.yahoo.com']) {
@@ -340,21 +339,6 @@ async function fetchYahooQuoteSummary(symbol, base, env) {
         const r = j?.quoteSummary?.result?.[0];
         if (!r) continue;
         const p = r.price || {}, sd = r.summaryDetail || {}, ks = r.defaultKeyStatistics || {}, fd = r.financialData || {}, ap = r.assetProfile || {};
-        const udh = r.upgradeDowngradeHistory?.history || [];
-        // 使用者質疑「分析師到底哪裡來的」——把彙總數字背後真實的券商名單、評等異動列出來，
-        // 比只顯示一個數字有說服力，也能讓使用者自己核對。只取最近5筆，按日期新到舊。
-        const analystHistory = udh
-          .filter(h => h.firm)
-          .sort((a, b) => (b.epochGradeDate || 0) - (a.epochGradeDate || 0))
-          .slice(0, 5)
-          .map(h => ({
-            firm: h.firm,
-            toGrade: h.toGrade || null,
-            fromGrade: h.fromGrade || null,
-            action: h.action || null,
-            priceTarget: typeof h.currentPriceTarget === 'number' && h.currentPriceTarget > 0 ? h.currentPriceTarget : null,
-            date: h.epochGradeDate ? new Date(h.epochGradeDate * 1000).toISOString().slice(0, 10) : null,
-          }));
         if (!unwrap(p.regularMarketPrice) && !unwrap(sd.marketCap) && !unwrap(p.marketCap)) continue;
         return {
           ...base,
@@ -385,9 +369,6 @@ async function fetchYahooQuoteSummary(symbol, base, env) {
           returnOnEquity: unwrap(fd.returnOnEquity),
           revenueGrowth: unwrap(fd.revenueGrowth),
           targetMeanPrice: unwrap(fd.targetMeanPrice),
-          recommendationKey: fd.recommendationKey,
-          numberOfAnalystOpinions: unwrap(fd.numberOfAnalystOpinions),
-          analystHistory,
           _source: 'Yahoo',
         };
       } catch {}

@@ -433,25 +433,6 @@ function renderTech(symbol,data,info){
   const pe=typeof info.trailingPE==='number'?info.trailingPE.toFixed(1):'N/A';
   const mktCap=fmtCap(info.marketCap);
   const vol=fmtVol(dayVol);
-  // Yahoo的recommendationKey在完全沒有分析師覆蓋時（常見於台股中小型股），不是留空，
-  // 而是回傳字面上的字串"none"——不能直接當成一個有效評級顯示給使用者看，要跟真的
-  // 沒資料一樣處理。另外實測發現台股（2330/2317/2454/2308.TW全部一樣）雖然有這個彙總
-  // 評級數字，但Yahoo的逐筆券商名單（analystHistory）系統性地不覆蓋台股，只有數字、
-  // 沒有任何可查證的明細——沒有明細的評級數字使用者沒辦法核實，等於黑箱，這裡選擇不顯示，
-  // 而不是留一個看起來像有根據、但實際上驗不到來源的數字。
-  const yahooRating=info.recommendationKey&&info.recommendationKey!=='none'&&info.analystHistory&&info.analystHistory.length?info.recommendationKey:null;
-  const ratingVal=info.analystRating||yahooRating||'N/A';
-  // 顏色要對應「這個評級實際上是不是正面」，不是「有沒有拿到值就上色」——之前的寫法犯的
-  // 就是這個錯，只要FMP有回傳任何字串（就算是Sell等級）都染成綠色。Yahoo的recommendationKey
-  // 是文件記載、已經實測驗證過的固定enum（strong_buy/buy/hold/sell/strong_sell/none），可以
-  // 放心對應顏色；FMP的rating是不透明的自家綜合評分（例如可能是"A+"這種字母等級），沒有
-  // 查到官方文件列出完整可能值，不確定就不亂猜對應關係、不上色，避免猜錯顏色比原本不上色更誤導。
-  const yahooSentiment=yahooRating==='strong_buy'||yahooRating==='buy'?'up'
-    :yahooRating==='sell'||yahooRating==='strong_sell'?'down':'';
-  const ratingClass=info.analystRating?'':yahooSentiment;
-  const ratingNote=info.analystRating?'來源：FMP 綜合評分（非真人分析師意見）'
-    :yahooRating?`來源：Yahoo 分析師共識${info.numberOfAnalystOpinions?'（'+info.numberOfAnalystOpinions+'位分析師)':''}`
-    :'';
   const n20highs=data.slice(-20).map(d=>d.high).filter(Boolean);
   const n20lows=data.slice(-20).map(d=>d.low).filter(Boolean);
   const n60highs=data.slice(-60).map(d=>d.high).filter(Boolean);
@@ -490,18 +471,9 @@ function renderTech(symbol,data,info){
     <div class="kpi"><div class="kpi-label">股價淨值比</div><div class="kpi-val">${typeof info.priceToBook==='number'?info.priceToBook.toFixed(2):'N/A'}</div></div>
     <div class="kpi"><div class="kpi-label">殖利率</div><div class="kpi-val ${typeof info.dividendYield==='number'?'up':''}">${typeof info.dividendYield==='number'?(info.dividendYield*100).toFixed(2)+'%':'N/A'}</div></div>
     <div class="kpi"><div class="kpi-label">Beta</div><div class="kpi-val">${typeof info.beta==='number'?info.beta.toFixed(2):'N/A'}</div></div>
-    <div class="kpi"><div class="kpi-label">分析師評級</div><div class="kpi-val ${ratingClass}">${ratingVal}</div>${ratingNote?`<div class="kpi-sub">${ratingNote}</div>`:''}</div>
     <div class="kpi"><div class="kpi-label">52週高</div><div class="kpi-val down">${typeof h52==='number'?fmt(h52):h52}</div></div>
     <div class="kpi"><div class="kpi-label">52週低</div><div class="kpi-val up">${typeof l52==='number'?fmt(l52):l52}</div></div>
   </div>
-  ${(info.analystHistory&&info.analystHistory.length)?`
-  <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border);font-size:11px;color:var(--text3);">
-    <div style="margin-bottom:4px;color:var(--text2);">最近分析師評等異動（Yahoo彙整各券商實際發布的評等，不是本站推算）：</div>
-    ${info.analystHistory.map(h=>`<div style="padding:2px 0;">${escapeHtml(h.firm)}${h.fromGrade&&h.toGrade&&h.fromGrade!==h.toGrade?`：${escapeHtml(h.fromGrade)} → ${escapeHtml(h.toGrade)}`:h.toGrade?`：${escapeHtml(h.toGrade)}`:''}${h.priceTarget?`（目標價 ${h.priceTarget}）`:''}${h.date?` · ${escapeHtml(h.date)}`:''}</div>`).join('')}
-  </div>`:(info.recommendationKey&&info.recommendationKey!=='none'?`
-  <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border);font-size:11px;color:var(--text3);">
-    Yahoo實際上有提供這支股票的分析師共識評等數字（${info.numberOfAnalystOpinions?`${info.numberOfAnalystOpinions}位分析師，`:''}評等：${escapeHtml(info.recommendationKey)}），但沒有提供逐筆券商名單可供查證——實測發現這是台股普遍的資料缺口（美股如AAPL可以列出實際券商，台股目前查不到）。沒有明細等於黑箱，本站選擇不顯示「分析師評級」這一項，而不是顯示一個驗不到來源的數字。
-  </div>`:'')}
 </div>`;
 
   document.getElementById('signalBarBox').innerHTML=`
