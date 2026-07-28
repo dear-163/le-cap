@@ -63,6 +63,10 @@ function goHome(){
   document.getElementById('symbolInput').value='';
   document.getElementById('welcomeBox').classList.remove('hidden');
   document.getElementById('tabBar').classList.add('hidden');
+  // tabBar只是分頁按鈕列，底下每個分頁內容（pane-tech等）本身沒有跟著隱藏——只藏按鈕列
+  // 的話，上一次分析的完整內容（K線、指標、AI判讀…）還是會留在頁面上，疊在首頁小工具
+  // 下面。跟analyze()開新分析前的清空邏輯一致，回首頁時也要把每個分頁內容收起來。
+  document.querySelectorAll('.tab-pane').forEach(p=>{p.classList.remove('active');p.classList.add('hidden');});
   document.getElementById('loadingBox').classList.add('hidden');
   document.getElementById('errorBox').classList.add('hidden');
   document.getElementById('analyzeBtn').disabled=false;
