@@ -47,20 +47,30 @@ async function fetchTwseIndexOnce(exCh) {
   };
 }
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// 原本重試3次、中間不停頓，使用者反映還是偶爾遇到「即時報價暫時無法取得」。改成5次、
+// 每次失敗後停頓一下再試（200ms遞增），讓機率性失敗多一點時間讓上游/邊緣節點恢復，
+// 而不是連續幾次都撞在同一個當下失敗的窗口——taiex/otc是Promise.all並行查，兩個指標
+// 共用同一個worst-case延遲，不會疊加。
 async function fetchTwseIndex(exCh) {
   let lastError = null;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  const MAX_ATTEMPTS = 5;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {
       const result = await fetchTwseIndexOnce(exCh);
       if (result) return result;
     } catch (e) {
       lastError = e.message;
     }
+    if (attempt < MAX_ATTEMPTS - 1) await sleep(200 * (attempt + 1));
   }
   // 這個端點沒有D1/KV快照機制（設計上就是要真即時），失敗時前端會自己沿用上次的值
   // （見app.js的lastGoodMarketData），但伺服器這端完全沒有log的話，事後根本查不出
   // 「剛剛那段時間到底是TWSE掛了還是我們自己的問題」——至少留一行log當診斷起點。
-  console.error(`[market-chart] TWSE MIS 三次嘗試皆失敗（${exCh}）：${lastError || 'msgArray為空'}`);
+  console.error(`[market-chart] TWSE MIS ${MAX_ATTEMPTS}次嘗試皆失敗（${exCh}）：${lastError || 'msgArray為空'}`);
   return null;
 }
 

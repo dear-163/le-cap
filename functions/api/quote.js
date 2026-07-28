@@ -130,16 +130,23 @@ async function fetchTwseMisRealtimePriceOnce(symbol) {
   return { price, time: row.t || null, date: row.d || null };
 }
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 // TWSE MIS這個端點對單次無狀態請求有機率性失敗（msgArray回空陣列，不是HTTP錯誤），跟
-// market-chart.js的fetchTwseIndex是同一個已知問題——那邊已經有重試3次的邏輯，這裡當初
-// 漏加，補上同樣的重試次數，降低使用者查台股個股時看到「沒有即時價、退回Yahoo延遲報價」
+// market-chart.js的fetchTwseIndex是同一個已知問題。原本重試3次、中間不停頓，使用者反映
+// 還是偶爾遇到「即時報價暫時無法取得」，改成跟market-chart.js一樣：5次、每次失敗後
+// 停頓一下再試（200ms遞增），降低使用者查台股個股時看到「沒有即時價、退回Yahoo延遲報價」
 // 的機率。
 async function fetchTwseMisRealtimePrice(symbol) {
-  for (let attempt = 0; attempt < 3; attempt++) {
+  const MAX_ATTEMPTS = 5;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {
       const result = await fetchTwseMisRealtimePriceOnce(symbol);
       if (result) return result;
     } catch {}
+    if (attempt < MAX_ATTEMPTS - 1) await sleep(200 * (attempt + 1));
   }
   return null;
 }
