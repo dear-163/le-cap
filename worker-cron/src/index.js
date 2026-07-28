@@ -1172,6 +1172,52 @@ async function recordEtfSignalsAndEvaluateOutcomes(db, todayDash) {
   return { recorded, evaluated };
 }
 
+// 「AI 深度技術判讀」進場建議的勝率回測：每天比對還沒判定勝負的舊紀錄，看call_date之後
+// 每個交易日的high/low，先碰到target_price算贏、先碰到stop_price算輸。同一天高低價都碰到
+// 兩個關卡時，日K線資料看不出盤中先後順序，保守認定先觸及停損（跟只看到最壞情況一致）。
+// 超過AI_STRATEGY_MAX_HOLDING_DAYS個交易日都沒觸及任一關卡，記為'expired'（不算輸贏，
+// 但停止繼續觀察，避免長期掛著INFINITE等待）。
+const AI_STRATEGY_MAX_HOLDING_DAYS = 20;
+
+async function resolveAiStrategyOutcomes(db) {
+  const { results: pending } = await db
+    .prepare('SELECT stock_code, call_date, stop_price, target_price FROM ai_strategy_calls WHERE outcome IS NULL')
+    .all();
+  if (!pending || !pending.length) return { evaluated: 0 };
+
+  const statements = [];
+  let evaluated = 0;
+  for (const call of pending) {
+    const callAd = adFromDash(call.call_date);
+    const { results: priceRows } = await db
+      .prepare('SELECT date, high, low FROM stock_daily_price WHERE code = ? AND date > ? ORDER BY date ASC LIMIT ?')
+      .bind(call.stock_code, callAd, AI_STRATEGY_MAX_HOLDING_DAYS + 1)
+      .all();
+
+    let outcome = null, outcomeDateAd = null;
+    for (const row of (priceRows || [])) {
+      const hitStop = row.low != null && row.low <= call.stop_price;
+      const hitTarget = row.high != null && row.high >= call.target_price;
+      if (hitStop) { outcome = 'loss'; outcomeDateAd = row.date; break; }
+      if (hitTarget) { outcome = 'win'; outcomeDateAd = row.date; break; }
+    }
+    if (!outcome && priceRows && priceRows.length >= AI_STRATEGY_MAX_HOLDING_DAYS) {
+      outcome = 'expired';
+      outcomeDateAd = priceRows[priceRows.length - 1].date;
+    }
+    if (outcome) {
+      const outcomeDateDash = `${outcomeDateAd.slice(0, 4)}-${outcomeDateAd.slice(4, 6)}-${outcomeDateAd.slice(6, 8)}`;
+      statements.push(
+        db.prepare('UPDATE ai_strategy_calls SET outcome = ?, outcome_date = ? WHERE stock_code = ? AND call_date = ?')
+          .bind(outcome, outcomeDateDash, call.stock_code, call.call_date)
+      );
+      evaluated++;
+    }
+  }
+  if (statements.length) await batchRun(db, statements);
+  return { evaluated };
+}
+
 export default {
   async scheduled(event, env, ctx) {
     const db = env.ELAN_QUANT_DB;
@@ -1216,6 +1262,15 @@ export default {
       } catch (e) {
         console.error('[cron] ETF訊號勝率追蹤失敗：', e.message);
         await logStep(db, 'etfSignalOutcomes', todayAd, nowHHMM, e.message);
+      }
+
+      try {
+        const outcome = await resolveAiStrategyOutcomes(db);
+        console.log(`[cron] AI技術判讀勝率追蹤：評估 ${outcome.evaluated} 筆結果`);
+        await logStep(db, 'aiStrategyOutcomes', todayAd, nowHHMM, null);
+      } catch (e) {
+        console.error('[cron] AI技術判讀勝率追蹤失敗：', e.message);
+        await logStep(db, 'aiStrategyOutcomes', todayAd, nowHHMM, e.message);
       }
       return;
     }

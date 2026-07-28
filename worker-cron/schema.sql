@@ -130,3 +130,26 @@ CREATE TABLE IF NOT EXISTS latest_stock_price (
   close REAL,
   name TEXT
 );
+
+-- 「AI 深度技術判讀」給出的進場關卡 + 系統算出的停損/停利，記錄下來回頭驗證勝率——
+-- 跟上面etf_signal_outcomes同樣的動機（不能自己說準就是準），但判定方式不同：這裡沒有
+-- 固定的N個交易日後看結果，而是每天比對stock_daily_price的high/low，看是先觸及停利價
+-- 還是停損價。只記錄真正的進場建議（entry_level不是CurrentPrice那種「僅供參考」的情況，
+-- 見public/app.js的isReferenceOnly判斷），避免非建議案例灌水勝率統計。
+CREATE TABLE IF NOT EXISTS ai_strategy_calls (
+  stock_code TEXT NOT NULL,
+  call_date TEXT NOT NULL,        -- AI判讀當下的台北日期（YYYY-MM-DD）。同一天同一檔股票只記錄
+                                    -- 第一次（見functions/api/log-ai-strategy-call.js的INSERT OR IGNORE），
+                                    -- 使用者重複查詢同一檔股票不會灌水樣本數。
+  entry_level TEXT NOT NULL,      -- AI選的進場關卡名稱
+  entry_price REAL NOT NULL,
+  stop_level TEXT NOT NULL,       -- 系統計算出的停損關卡名稱
+  stop_price REAL NOT NULL,
+  target_level TEXT NOT NULL,     -- 系統計算出的停利關卡名稱
+  target_price REAL NOT NULL,
+  outcome TEXT,                   -- NULL=待評估、'win'=先觸及停利、'loss'=先觸及停損、
+                                    -- 'expired'=超過最大觀察天數都沒觸及任一關卡
+  outcome_date TEXT,              -- 觸及/到期當天的日期（YYYY-MM-DD）
+  PRIMARY KEY (stock_code, call_date)
+);
+CREATE INDEX IF NOT EXISTS idx_ai_strategy_calls_outcome ON ai_strategy_calls(outcome);

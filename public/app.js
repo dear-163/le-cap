@@ -1165,11 +1165,58 @@ async function runTechAIStrategy(symbol,companyName,techAIInput,gen){
     const {system,user}=buildTechAIPrompt(symbol,companyName,techAIInput);
     const result=await callGeminiJSON(system,user,selectedModel,TECH_AI_SCHEMA,gen);
     if(gen!==analyzeGeneration||!result) return;
-    renderTechAIStrategy(result,validateTechAIStrategy(result,techAIInput));
+    const validation=validateTechAIStrategy(result,techAIInput);
+    renderTechAIStrategy(result,validation);
+    logAiStrategyCall(symbol,validation);
   }catch(e){
     if(gen!==analyzeGeneration) return;
     el.innerHTML=`<div class="error-box">⚠ AI 深度技術判讀失敗：${escapeHtml(e.message)}</div>`;
   }
+}
+
+// 只有台股在stock_daily_price有每日高低價歷史可以回頭驗證勝率（美股沒有對應資料源），
+// 所以只在台股時記錄；美股記了也永遠不會被worker-cron判定出勝負，只會污染樣本。
+// entryLevel是CurrentPrice時代表AI給的是「僅供參考」而非真正的進場建議，同樣不記錄。
+// fire-and-forget：記錄失敗不影響畫面顯示，使用者不需要知道。
+function logAiStrategyCall(symbol,validation){
+  if(!/\.TWO?$/i.test(symbol)) return;
+  const {entry,stopLoss,takeProfit,entryLevel,stopLevel,targetLevel}=validation;
+  if(entryLevel==='CurrentPrice') return;
+  if(entry==null||stopLoss==null||takeProfit==null||stopLevel==null||targetLevel==null) return;
+  const stockCode=symbol.replace(/\.TWO?$/i,'');
+  fetch('/api/log-ai-strategy-call',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({stockCode,entryLevel,entryPrice:entry,stopLevel,stopPrice:stopLoss,targetLevel,targetPrice:takeProfit})
+  }).catch(()=>{});
+}
+
+// 過往「合理買入價」建議的勝率——跟訊號勝率（loadEtfSignalWinRate）同樣的精神，全站只查
+// 一次（不用隨每次analyze()重抓），renderTechAIStrategy每次重繪時直接讀這個模組層變數，
+// 在fetch完成前render的話該行就先不顯示（下一次重繪自然會補上，不特別處理race condition）。
+let aiStrategyWinRate=null;
+async function loadAiStrategyWinRateData(){
+  try{
+    const res=await fetch('/api/ai-strategy-winrate?t='+Date.now());
+    if(!res.ok) return;
+    const data=await res.json().catch(()=>null);
+    if(data&&!data.error) aiStrategyWinRate=data;
+  }catch(e){
+    console.error('Failed to load AI strategy win rate:',e);
+  }
+}
+loadAiStrategyWinRateData();
+
+function aiStrategyWinRateLine(){
+  const d=aiStrategyWinRate;
+  if(!d) return '';
+  const {decidedCount,winCount,winRate,pendingCount,expiredCount,sufficientSample,maxHoldingTradingDays}=d;
+  if(decidedCount===0&&pendingCount===0&&expiredCount===0) return '';
+  if(decidedCount===0) return `📊 進場建議勝率追蹤上線中：已記錄 ${pendingCount} 筆建議，等待觸及停損或停利價才會有第一筆結果（最長觀察 ${maxHoldingTradingDays} 個交易日）`;
+  const sampleNote=sufficientSample?'':'<span style="color:var(--amber);">（樣本數還少，僅供參考）</span>';
+  const pendingNote=pendingCount>0?`，另有 ${pendingCount} 筆等待驗證`:'';
+  const expiredNote=expiredCount>0?`，${expiredCount} 筆超過 ${maxHoldingTradingDays} 個交易日未觸及任一價位`:'';
+  return `📊 過往進場建議勝率：<strong style="color:var(--text);">${winRate}%</strong>（${winCount}/${decidedCount}筆，先觸及停利算贏、先觸及停損算輸）${sampleNote}${pendingNote}${expiredNote}`;
 }
 
 function renderTechAIStrategy(result,validation){
@@ -1185,6 +1232,7 @@ function renderTechAIStrategy(result,validation){
   el.innerHTML=`
 <div class="conclusion-card">
   <div class="conclusion-title">🤖 AI 深度技術判讀（合理買入價與風控策略）</div>
+  ${aiStrategyWinRateLine()?`<div style="font-size:11px;color:var(--text3);margin-bottom:10px">${aiStrategyWinRateLine()}</div>`:''}
   ${(warnings&&warnings.length)?`<div class="error-box" style="margin-bottom:12px">🛑 系統提醒：<ul style="margin:6px 0 0 18px;padding:0">${warnings.map(w=>`<li>${escapeHtml(w)}</li>`).join('')}</ul></div>`:''}
   <div class="overall-signal">
     <div class="os-label">綜合訊號</div>
